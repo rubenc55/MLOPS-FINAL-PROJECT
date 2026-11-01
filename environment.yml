@@ -1,13 +1,16 @@
-# environment.yml  [Dependencies]
-# -------------------------------------------------------------------
-# Purpose   List the packages (and Python version) the project needs
-# Used by   You and your teammates: conda env create -f environment.yml
-# Why       Everyone runs the same code on the same versions ("works on my machine" ends here)
-#
-# Typical groups
-#   data and modelling    e.g. pandas, scikit-learn, joblib
-#   notebooks and plots   exploration only
-#   quality (stage 2)     test runner, coverage, style checker
-#   stage 3               config, tracking, serving and locking tools
-#
-# Stage 3: conda-lock.yml freezes these into exact versions for CI and Docker
+# environment.yml  [Shared conda environment for the shipping cost pipeline]
+# Build once with: conda env create -f environment.yml
+name: shipping-cost
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  # Pipeline packages (imported by src/)
+  - pandas        # read and write tables (notebook cells 9 and 41)
+  - numpy         # numeric arrays (cells 21 and 28)
+  - scikit-learn  # ColumnTransformer, RandomForestRegressor, metrics (cells 24, 26 and 28)
+  - joblib        # save and load the fitted model (cells 37 and 39)
+    # Development tools (check the code, not needed to run it)
+  - pytest      # test runner
+  - pytest-cov  # coverage report: pytest --cov=src
+  - flake8      # style checker
