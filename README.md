@@ -1,21 +1,66 @@
-# MLOps Project Skeleton (reference only)
+# Shipping Cost Prediction
 
-This repo is a **map, not a codebase**. Every file is a placeholder: no code, only a short note on
-what the file does, where it sits in the pipeline and which files it talks to.
+> Racing Cargo should fund cost prediction as an MLOps project: tested, weekly retrained estimates replace generic tables, cutting quote time and winning more customers.
 
-Create the same folders and files in **your own** project repo, then write the code for **your** use case.
+## 1. Business case
 
-## Stages = branches
+### Context
+- **Client:** Racing Cargo, a freight forwarder. Users: Sales and Pricing teams.
+- **Maturity:** data MEDIUM (all shipments, quotes and won or lost outcomes are recorded in a MySQL database fed by an in-house TMS). Tools: MySQL, in-house TMS, Python models, Power BI. Processes: documented quoting flow (customer -> sales rep -> Pricing -> carriers). People: Business Analytics codes in Python and adopts Git from this project.
+- **Owners:** Business Analytics retrains and monitors the model. IT maintains the infrastructure and the TMS.
 
-| Branch | Stage | Sessions | What it adds |
-|---|---|---|---|
-| `main` (you are here) | 1. Kickoff | 1 to 3 | Folder structure, business case, one placeholder per pipeline step |
-| `stage-2-modular` | 2. Modular code | 4 to 9 | Tests, style and test settings, first CI (Continuous Integration) workflow |
-| `stage-3-cicd` | 3. CI/CD | 10 to 14 | Config loader, logging, experiment tracking, API, Docker, deployment |
+### Problem and baseline
+Sales reps and the Pricing team struggle with slow quote responses because each quote is priced individually with every carrier, so some customers choose a competitor. Today the customer asks a sales rep, the rep asks Pricing, and Pricing quotes with carriers.
 
-Tip: on GitHub, open **Compare** (`main...stage-2-modular`) to see exactly what each stage adds.
+- Quote response time: 24 to 48 h per quote (team estimate, to be measured in the TMS as quote delivery date minus request date)
+- Hit rate: 20% (quotes won / total quotes, from the TMS)
 
-## The pipeline at a glance
+### Goal and success metrics
+| Type | Metric (exact name) | Baseline | Target or threshold |
+| --- | --- | --- | --- |
+| Business KPI | Quote response time | 24 to 48 h (estimate) | At most 2 h, within 3 months of go-live |
+| Business KPI | Hit rate | 20% | 35%, within 3 months of go-live |
+| ML metric (quality gate) | `mae` | To be measured | At most 200 USD on unseen data |
+| ML metric (quality gate) | `mape` | To be measured | At most 18% on unseen data |
+
+- **Link:** a low `mae` lets sales reps trust the estimated cost and quote without waiting for Pricing, which cuts response time and raises the hit rate.
+- **Release rule:** if the model fails either threshold, it is not released.
+- **Limits:** under 5 min per estimate; cost per prediction negligible on current infrastructure (estimate).
+
+### Solution
+When a sales rep enters a quote request, the Pricing analyst sees the model's estimated cost in USD, reviews it and shares it with Sales. The sales rep adds the margin and sends the customer a price within 2 h. Pricing confirms the cost with the carrier afterwards.
+
+- **Prediction:** `cost_usd` from transport mode, cargo type, distance, weight, volume, urgency and month, in real time (on request).
+- **Fallback:** if the model is unavailable or the shipment is outside the estimation parameters, the system notifies it and Pricing confirms costs directly with carriers.
+
+### Data
+- **Source:** `shipments.xlsx`, a synthetic extract that simulates the TMS (MySQL). Owner: IT (TMS); Business Analytics (training data). Size: 5,000 shipments, current year.
+- **Label:** `cost_usd`, the carrier cost. Assumption: quoted cost equals invoiced cost.
+- **Inputs:** all known at quoting time. Assumption: declared weight and volume equal actual values.
+- **Refresh:** new shipments arrive daily; the model is retrained weekly.
+- **Personal or sensitive data:** No. The dataset is synthetic and has no customer data.
+
+### Value, cost and risks
+- **Benefit:** cost estimates in minutes instead of 24 to 48 h, using more variables than a generic tariff table (accuracy advantage not yet measured).
+- **Rough cost (estimate):** Business Analytics team, about 8,000 USD per month in salaries for 3 months (about 24,000 USD); existing IT infrastructure; 12 weeks to production.
+- **Scales to:** all company branches, routes and services.
+
+| Risk | Mitigation |
+| --- | --- |
+| Carrier-confirmed cost differs from the price already sent to the customer | If the gap exceeds 18% or 200 USD, Pricing analyses the root cause and evaluates switching to a carrier with prices closer to the estimate |
+| Business Analytics has no Git experience | All code is managed in Git from this project onwards |
+| Poorly captured data in the TMS (wrong units, typos) | Data cleaning in the SQL database and data validation in the pipeline |
+| Market costs change (for example fuel prices) | Weekly retraining to capture price changes |
+
+### Open gaps
+- Benefit over a simple tariff table (for example median cost per transport mode) is not measured.
+- Current quote response time is an estimate; to be measured in the TMS.
+- Maturity levels for tools, processes and people are not rated.
+- Rules that define a shipment "outside the estimation parameters" are not defined.
+
+## 2. Project structure
+
+### The pipeline at a glance
 
 ```text
                            main.py  (orchestrator, one command)
@@ -26,7 +71,7 @@ Tip: on GitHub, open **Compare** (`main...stage-2-modular`) to see exactly what 
                      reports/predictions.csv <- infer <- models/model.joblib (save)
 ```
 
-## Stage 1 structure
+### Folders and files
 
 ```text
 .
@@ -54,9 +99,3 @@ Tip: on GitHub, open **Compare** (`main...stage-2-modular`) to see exactly what 
 ├── reports/                  # predictions, plots (generated)
 └── tests/                    # automated tests (stage 2)
 ```
-
-## How to use this skeleton
-
-1. Open a file and read its note
-2. Create the equivalent file in your repo
-3. Write your own code: the note describes the job, not the solution
