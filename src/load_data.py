@@ -1,16 +1,36 @@
-"""
-load_data.py  [Step 1: LOAD]
-============================
-Purpose   Read the raw dataset into a DataFrame, exactly as it is on disk
-Input     Path to the raw file (config: paths.raw_data)
-Output    Raw pandas DataFrame, untouched
-Called by main.py          Uses   utils.py (file reading)
-Next      clean_data.py
+"""Read the raw shipments data for the pipeline, without changing it.
 
-Why it matters
-- One entry point for data: swap CSV for a database or API later without touching other files
-- Read only: the raw file is never modified, so every run is reproducible
-- Fail fast with a clear message if the file is missing, a folder, or empty
-
-Tests     tests/test_load_data.py (stage 2)
+Inputs: raw_data_path, the CSV file set in SETTINGS["paths"] (data/raw/shipments.csv).
+Outputs: a DataFrame with every raw row and column.
+Used by: main, as the first pipeline step; its output goes to clean_data.
+Why: stop the pipeline early, with a clear message, when the raw file is missing, a folder or empty.
 """
+
+from pathlib import Path
+
+import pandas as pd
+
+from src.utils import load_csv
+
+
+def load_raw_data(raw_data_path: Path) -> pd.DataFrame:
+    """Read the raw shipments CSV exactly as it is.
+
+    Inputs: raw_data_path, path to the raw CSV file.
+    Outputs: a DataFrame with all raw rows and columns, unchanged.
+    Why: a missing, folder or empty input must stop the pipeline here, not produce a useless model later.
+    """
+    raw_data_path = Path(raw_data_path)
+    if not raw_data_path.exists():
+        raise FileNotFoundError(f"Raw data file not found: {raw_data_path}. Check SETTINGS['paths'].")
+    if raw_data_path.is_dir():
+        raise ValueError(f"Raw data path is a folder, not a CSV file: {raw_data_path}")
+    if raw_data_path.stat().st_size == 0:
+        raise ValueError(f"Raw data file is empty: {raw_data_path}")
+
+    df = load_csv(raw_data_path)
+    if df.empty:
+        raise ValueError(f"Raw data file has headers but no rows: {raw_data_path}")
+    # TODO: replace print with logging (Session 10)
+    print(f"Loaded raw data: {len(df)} rows, {df.shape[1]} columns")
+    return df
