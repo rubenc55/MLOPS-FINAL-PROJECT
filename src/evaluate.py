@@ -1,15 +1,45 @@
-"""
-evaluate.py  [Step 6: EVALUATE]
-===============================
-Purpose   Score the fitted pipeline on data it has never seen
-Input     Fitted pipeline + X_eval, y_eval (validation split; test split once, at the end)
-Output    Dictionary of plain numbers, e.g. {"pr_auc": 0.61, "roc_auc": 0.84}
-Called by main.py          Feeds  stage 3: the quality gate and experiment tracking
+"""Score a trained model on unseen data with the business metrics.
 
-Why it matters
-- Never score on training data: it hides overfitting
-- Metric choice follows the business goal and problem type (set in config)
-- Plain numbers are easy to log, compare between runs and turn into a go/no-go decision
-
-Tests     tests/test_evaluate.py (stage 2)
+Inputs: a fitted Pipeline, evaluation features and true costs (the validation split, passed by main).
+Outputs: {"mae": float, "mape": float}: MAE in USD, MAPE as a fraction (0.18 means 18%).
+Used by: main, which compares these values with the quality gate in SETTINGS.
+Why: the gate reads these exact keys and units; a wrong key or unit would block or release a model wrongly.
 """
+
+import pandas as pd
+from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error
+from sklearn.pipeline import Pipeline
+
+
+def _check_inputs(X_eval: pd.DataFrame, y_eval: pd.Series, problem_type: str) -> None:
+    """Fail fast with a clear message before any scoring happens."""
+    if problem_type != "regression":
+        raise ValueError(
+            f"Unsupported problem_type: {problem_type!r}. evaluate_model only supports 'regression' "
+            "(see TEAM_BRIEF.md). Check SETTINGS['problem']['problem_type']."
+        )
+    if len(X_eval) == 0 or len(y_eval) == 0:
+        raise ValueError("Evaluation data is empty. Check the validation split sizes in SETTINGS['split'].")
+    if len(X_eval) != len(y_eval):
+        raise ValueError(
+            f"X_eval and y_eval must have the same number of rows, got {len(X_eval)} and {len(y_eval)}. "
+            "Check the split in main."
+        )
+
+
+def evaluate_model(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series,
+                   problem_type: str) -> dict[str, float]:
+    """Score a fitted model on unseen data with the metrics of the quality gate.
+
+    Inputs: fitted Pipeline from train, X_eval and y_eval (validation split), problem_type ("regression").
+    Outputs: {"mae": ..., "mape": ...} as plain Python floats; MAPE is a fraction, not a percentage.
+    Why: main's quality gate reads these keys; scoring only unseen rows keeps the numbers honest.
+    """
+    # TODO: replace print with logging (Session 10)
+    print(f"Evaluating model on {len(X_eval)} rows")
+    _check_inputs(X_eval, y_eval, problem_type)
+    y_pred = model.predict(X_eval)
+    return {
+        "mae": float(mean_absolute_error(y_eval, y_pred)),
+        "mape": float(mean_absolute_percentage_error(y_eval, y_pred)),
+    }
