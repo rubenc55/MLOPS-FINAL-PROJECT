@@ -138,4 +138,4 @@ def test_integration_fitted_recipe_transforms_new_shipments() -> None:
     np.testing.assert_array_equal(
         values[:, mode_positions],
         np.zeros((1, 3)),
-    ) 
+    )
