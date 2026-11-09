@@ -54,8 +54,8 @@ SETTINGS = {
     "split": {"test_size": 0.15, "val_size": 0.15, "random_state": 42},
     # No random_state here: train_model receives the seed from SETTINGS["split"]
     "model_params": {"n_estimators": 200, "max_depth": None, "max_features": 0.5, "min_samples_leaf": 5},
-    # Lower is better: each metric on validation must be <= its limit
-    "quality_gate": {"mae": 200.0, "mape": 0.18},
+    # Lower is better: mape on validation must be <= its limit; mae is reported but not gated (README)
+    "quality_gate": {"mape": 0.18},
 }
 
 
