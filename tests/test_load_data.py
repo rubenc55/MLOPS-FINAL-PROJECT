@@ -45,3 +45,9 @@ def test_integration_load_raw_data_reads_file_saved_by_utils(tmp_path):
     loaded = load_raw_data(filepath)
 
     pd.testing.assert_frame_equal(loaded, df)
+
+
+def test_unit_load_raw_data_folder_path_raises(tmp_path):
+    """A folder given as the raw data path stops the pipeline with a clear ValueError."""
+    with pytest.raises(ValueError, match="folder"):
+        load_raw_data(tmp_path)

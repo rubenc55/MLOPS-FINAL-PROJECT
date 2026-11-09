@@ -5,7 +5,7 @@ import copy
 import pandas as pd
 import pytest
 
-from src.main import SETTINGS, check_quality_gate, run_pipeline, split_data
+from src.main import SETTINGS, check_quality_gate, main, run_pipeline, split_data
 
 
 def _make_raw_df(n_rows: int = 60) -> pd.DataFrame:
@@ -91,3 +91,19 @@ def test_integration_run_pipeline_failed_gate_saves_no_model(tmp_path):
 
     assert not settings["paths"]["model"].exists()
     assert not settings["paths"]["predictions"].exists()
+
+
+def test_unit_check_quality_gate_missing_metric_raises():
+    """A gate metric that evaluate_model did not return stops the release, and the message names it."""
+    with pytest.raises(ValueError, match="mape"):
+        check_quality_gate({"mae": 150.0}, {"mape": 0.18})
+
+
+def test_unit_main_runs_pipeline_with_project_settings(monkeypatch):
+    """main() hands the project SETTINGS to run_pipeline, so python -m src.main has one source of settings."""
+    calls = []
+    monkeypatch.setattr("src.main.run_pipeline", calls.append)
+
+    main()
+
+    assert len(calls) == 1 and calls[0] is SETTINGS
