@@ -1,13 +1,70 @@
-"""
-utils.py  [Shared plumbing]
-===========================
-Purpose   Small, reusable read and write helpers
-Examples  read and write CSV files, save and load the model file
-Used by   load_data.py, main.py, infer.py, api.py (stage 3)
+"""Generic read and write helpers for CSV files and fitted models.
 
-Why it matters
-- One place for file I/O (Input/Output): fix a bug once, every module benefits
-- No business logic: if a helper knows your target column, it belongs elsewhere
-
-Tests     tests/test_utils.py (stage 2)
+Inputs: file paths (pathlib.Path), DataFrames and fitted models.
+Outputs: loaded DataFrames or models; files written with their parent folders created.
+Used by: load_data, main and infer.
+Why: one shared way to read and write files, so every module behaves the same.
 """
+
+from pathlib import Path
+
+import joblib
+import pandas as pd
+
+
+def load_csv(filepath: Path) -> pd.DataFrame:
+    """Read a CSV file into a DataFrame.
+
+    Inputs: filepath, the CSV file to read.
+    Outputs: a DataFrame with the file's rows and columns.
+    Why: fail fast if the file is missing, and keep column names clean in CSV files exported by Excel.
+    """
+    # TODO: replace print with logging (Session 10)
+    print(f"Loading CSV: {filepath}")
+    filepath = Path(filepath)
+    if not filepath.is_file():
+        raise FileNotFoundError(f"CSV file not found: {filepath}. Check the path in SETTINGS['paths'].")
+    return pd.read_csv(filepath, encoding="utf-8-sig")
+
+
+def save_csv(df: pd.DataFrame, filepath: Path) -> None:
+    """Write a DataFrame to a CSV file.
+
+    Inputs: df, the table to save; filepath, where to write it.
+    Outputs: none; the file is written and missing parent folders are created.
+    Why: index=False keeps the file identical to the data, so load_csv returns the same table.
+    """
+    # TODO: replace print with logging (Session 10)
+    print(f"Saving CSV: {filepath}")
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(filepath, index=False)
+
+
+def save_model(model, filepath: Path) -> None:
+    """Save a fitted model or Pipeline to disk with joblib.
+
+    Inputs: model, the fitted object; filepath, where to write it (e.g. models/model.joblib).
+    Outputs: none; the file is written and missing parent folders are created.
+    Why: the saved Pipeline keeps its preprocessing, so inference uses exactly the trained recipe.
+    """
+    # TODO: replace print with logging (Session 10)
+    print(f"Saving model: {filepath}")
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, filepath)
+
+
+def load_model(filepath: Path):
+    """Load a model or Pipeline saved with save_model.
+
+    Inputs: filepath, the .joblib file to read.
+    Outputs: the fitted model, ready to predict.
+    Why: fail fast with a clear message if the model was not trained yet or the path is wrong.
+    """
+    # TODO: replace print with logging (Session 10)
+    print(f"Loading model: {filepath}")
+    filepath = Path(filepath)
+    if not filepath.is_file():
+        raise FileNotFoundError(f"Model file not found: {filepath}. Run the pipeline first: python -m src.main")
+    return joblib.load(filepath)
