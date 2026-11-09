@@ -46,7 +46,7 @@ SETTINGS = {
         "numeric_ranges": {
             "distance_km": (50, 12000),
             "weight_kg": (10, 9900),
-            "volume_m3": (0.03, 93.21),
+            "volume_m3": (0.028, 93.213),
             "month": (1, 12),
         },
     },

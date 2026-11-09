@@ -15,7 +15,7 @@
 - Split: test 0.15 and validation 0.15, both of the full dataset; random_state 42
 - Validation rules: required columns; no missing values; cost_usd > 0 (training only)
 - Validation rules: transport_mode in Road/Sea/Air; cargo_type in General/Refrigerated/Hazardous; urgent 0/1; month 1-12
-- Validation rules: distance_km 50-12000; weight_kg 10-9900; volume_m3 0.03-93.21 (historical min-max)
+- Validation rules: distance_km 50-12000; weight_kg 10-9900; volume_m3 0.028-93.213 (historical min-max)
 - README follow-ups: business confirms the range rules for "outside the estimation parameters" -> Ruben Cuellar
 - features.py signature: get_feature_preprocessor(categorical_columns, numeric_columns), settings per group: none
 - Agreed extra parameters: validate_dataframe(allowed_values=None, numeric_ranges=None)
