@@ -45,7 +45,6 @@ def test_unit_evaluate_rejects_unknown_problem_type():
         evaluate_model(model, X, y, problem_type="classification")
 
 
-@pytest.mark.skip(reason="Awaiting features and train in dev")
 def test_integration_evaluate_scores_output_of_train_model():
     from src.features import get_feature_preprocessor
     from src.train import train_model
