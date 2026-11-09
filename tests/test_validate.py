@@ -79,3 +79,20 @@ def test_integration_validate_after_clean_data():
     cleaned = clean_data(df)
 
     validate_dataframe(cleaned, REQUIRED, target_column="cost_usd", allowed_values=ALLOWED, numeric_ranges=RANGES)
+
+
+def test_unit_validate_dataframe_missing_values_raise():
+    """A missing value in a required column stops the pipeline, and the message counts it."""
+    df = _make_df()
+    df.loc[0, "weight_kg"] = None
+
+    with pytest.raises(ValueError, match="weight_kg: 1 missing values"):
+        validate_dataframe(df, REQUIRED, allowed_values=ALLOWED, numeric_ranges=RANGES)
+
+
+def test_unit_validate_dataframe_skips_rules_for_absent_columns():
+    """A value rule for a column that is not in the table is skipped; only required columns must exist."""
+    df = _make_df()
+    allowed = {**ALLOWED, "cargo_type": ["General", "Refrigerated", "Hazardous"]}
+
+    validate_dataframe(df, REQUIRED, allowed_values=allowed, numeric_ranges=RANGES)
