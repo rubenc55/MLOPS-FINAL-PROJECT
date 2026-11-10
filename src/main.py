@@ -7,6 +7,7 @@ it is the only place where the modules are wired together.
 Why: one entry point and one source of settings, so every run follows the same steps.
 """
 
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +22,7 @@ from src.train import train_model
 from src.utils import save_csv, save_model
 from src.validate import validate_dataframe
 
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -80,7 +82,7 @@ def split_data(  # pylint: disable=too-many-arguments,too-many-positional-argume
     Outputs: (X_train, X_val, X_test, y_train, y_val, y_test) with no shared rows.
     Why: the model learns only from train, the gate uses validation, and test stays sealed.
     """
-    print(f"Splitting {len(X)} rows: test {test_size}, validation {val_size}")
+    logger.info("Splitting %d rows: test %s, validation %s", len(X), test_size, val_size)
     x_rest, x_test, y_rest, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state, stratify=y if stratify else None
     )
@@ -100,7 +102,7 @@ def check_quality_gate(metrics: dict[str, float], quality_gate: dict[str, float]
     Outputs: None if every metric is at or below its limit; otherwise raises ValueError.
     Why: a model that misses the business case (README) must never be saved or used for quotes.
     """
-    print(f"Checking quality gate {quality_gate} against validation metrics {metrics}")
+    logger.info("Checking quality gate %s against validation metrics %s", quality_gate, metrics)
     missing = [name for name in quality_gate if name not in metrics]
     if missing:
         raise ValueError(
@@ -113,7 +115,7 @@ def check_quality_gate(metrics: dict[str, float], quality_gate: dict[str, float]
     ]
     if failures:
         raise ValueError(f"Model not released, quality gate failed: {'; '.join(failures)}")
-    print("Quality gate met: every validation metric is within its limit")
+    logger.info("Quality gate met: every validation metric is within its limit")
 
 
 def _train_and_release(settings: dict) -> tuple:
@@ -152,7 +154,9 @@ def _train_and_release(settings: dict) -> tuple:
 
     # 5. Test is scored once, after the release decision, only to report it
     test_metrics = evaluate_model(model, x_test, y_test, problem["problem_type"])
-    print(f"Validation metrics: {val_metrics} | Test metrics (report only): {test_metrics}")
+    logger.info(
+        "Validation metrics: %s | Test metrics (report only): %s", val_metrics, test_metrics
+    )
 
     save_model(model, settings["paths"]["model"])
     return model, val_metrics
@@ -180,7 +184,7 @@ def _predict_new_shipments(settings: dict, model) -> pd.DataFrame:
     output = pd.concat([df[[id_column]], predictions], axis=1)
 
     save_csv(output, paths["predictions"])
-    print(f"Saved {len(output)} predictions to {paths['predictions']}")
+    logger.info("Saved %d predictions to %s", len(output), paths["predictions"])
     return output
 
 
@@ -191,12 +195,12 @@ def run_pipeline(settings: dict) -> dict[str, float]:
     Outputs: validation metrics of the released model.
     Why: settings as a parameter lets tests run the whole pipeline without touching real folders.
     """
-    print("Starting the shipping cost pipeline")
+    logger.info("Starting the shipping cost pipeline")
     model, val_metrics = _train_and_release(settings)
     _predict_new_shipments(settings, model)
-    print(
-        f"Done. Model: {settings['paths']['model']} | "
-        f"Predictions: {settings['paths']['predictions']}"
+    logger.info(
+        "Done. Model: %s | Predictions: %s",
+        settings["paths"]["model"], settings["paths"]["predictions"],
     )
     return val_metrics
 
@@ -207,7 +211,9 @@ def main() -> None:
     Inputs: none (uses SETTINGS). Outputs: model and predictions files on disk.
     Why: one command for the team, CI and later the stage 3 API.
     """
-    print("Running the pipeline with the project SETTINGS")
+    # Only the entry point configures logging; every module just writes to its own logger
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger.info("Running the pipeline with the project SETTINGS")
     run_pipeline(SETTINGS)
 
 

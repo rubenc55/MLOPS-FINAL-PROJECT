@@ -6,8 +6,12 @@ Used by: the training orchestration.
 Why: keep feature preparation consistent in training and inference.
 """
 
+import logging
+
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_column_list(
@@ -44,7 +48,7 @@ def get_feature_preprocessor(
     Outputs: an unfitted ColumnTransformer.
     Why: reuse the same preparation during training and inference.
     """
-    print("Building feature preprocessor")
+    logger.info("Building feature preprocessor")
 
     _validate_column_list(categorical_columns, "categorical_columns")
     _validate_column_list(numeric_columns, "numeric_columns")

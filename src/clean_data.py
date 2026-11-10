@@ -7,7 +7,11 @@ Used by: main, between load_data and validate.
 Why: stray spaces typed in the TMS (" Road") must not make validate reject a valid shipment.
 """
 
+import logging
+
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> pd.DataFrame:
@@ -31,10 +35,10 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> p
         cleaned[column] = cleaned[column].map(
             lambda value: value.strip() if isinstance(value, str) else value
         )
-    print(f"Cleaned text columns: {text_columns}")
+    logger.info("Cleaned text columns: %s", text_columns)
     # A missing target column is left for validate to report with its clear message
     if target_column is not None and target_column in cleaned.columns:
         rows_before = len(cleaned)
         cleaned = cleaned.dropna(subset=[target_column])
-        print(f"Dropped {rows_before - len(cleaned)} rows with a missing {target_column}")
+        logger.info("Dropped %d rows with a missing %s", rows_before - len(cleaned), target_column)
     return cleaned

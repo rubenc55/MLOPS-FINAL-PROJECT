@@ -9,11 +9,15 @@ Why: fitting on the train split only keeps validation and test metrics honest, a
 means what we evaluate is exactly what we deploy.
 """
 
+import logging
+
 import pandas as pd
 from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.pipeline import Pipeline
+
+logger = logging.getLogger(__name__)
 
 
 def _check_inputs(x_train: pd.DataFrame, y_train: pd.Series, problem_type: str,
@@ -53,7 +57,7 @@ def train_model(  # pylint: disable=too-many-arguments,too-many-positional-argum
     Outputs: the fitted Pipeline with steps "preprocess" and "model".
     Why: the preprocessor is cloned, so the recipe from features stays unfitted and reusable.
     """
-    print(f"Training model on {len(X_train)} rows")
+    logger.info("Training model on %d rows", len(X_train))
     model_params = model_params or {}
     _check_inputs(X_train, y_train, problem_type, model_params)
     model = Pipeline([

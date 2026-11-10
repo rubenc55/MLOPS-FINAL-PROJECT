@@ -6,11 +6,14 @@ Used by: main, as the first pipeline step; its output goes to clean_data.
 Why: stop the pipeline early, with a clear message, when the raw file is missing, a folder or empty.
 """
 
+import logging
 from pathlib import Path
 
 import pandas as pd
 
 from src.utils import load_csv
+
+logger = logging.getLogger(__name__)
 
 
 def load_raw_data(raw_data_path: Path) -> pd.DataFrame:
@@ -34,5 +37,5 @@ def load_raw_data(raw_data_path: Path) -> pd.DataFrame:
     df = load_csv(raw_data_path)
     if df.empty:
         raise ValueError(f"Raw data file has headers but no rows: {raw_data_path}")
-    print(f"Loaded raw data: {len(df)} rows, {df.shape[1]} columns")
+    logger.info("Loaded raw data: %d rows, %d columns", len(df), df.shape[1])
     return df
