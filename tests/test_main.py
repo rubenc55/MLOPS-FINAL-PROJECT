@@ -49,14 +49,32 @@ def _make_settings(tmp_path, quality_gate: dict) -> dict:
 
 
 def test_unit_split_data_sizes_and_no_overlap():
-    """60 rows split 70/15/15 give 42, 9 and 9 rows, and no shipment appears in two parts."""
+    """60 rows split 70/15/15 give 42, 9 and 9 rows, X and y stay aligned, and no shipment appears in two parts."""
     df = _make_raw_df()
+    X, y = df.drop(columns="cost_usd"), df["cost_usd"]
 
-    train, val, test = split_data(df, test_size=0.15, val_size=0.15, random_state=42)
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(
+        X, y, test_size=0.15, val_size=0.15, random_state=42, stratify=False
+    )
 
-    assert (len(train), len(val), len(test)) == (42, 9, 9)
-    ids = [set(part["shipment_id"]) for part in (train, val, test)]
+    assert (len(X_train), len(X_val), len(X_test)) == (42, 9, 9)
+    for X_part, y_part in ((X_train, y_train), (X_val, y_val), (X_test, y_test)):
+        assert X_part.index.equals(y_part.index)
+    ids = [set(part["shipment_id"]) for part in (X_train, X_val, X_test)]
     assert not (ids[0] & ids[1] or ids[0] & ids[2] or ids[1] & ids[2])
+
+
+def test_unit_split_data_stratify_keeps_class_shares():
+    """With stratify=True every part keeps the class share of y (here 20% of ones)."""
+    X = _make_raw_df()
+    y = pd.Series([1 if i % 5 == 0 else 0 for i in range(len(X))], index=X.index)
+
+    _, _, _, y_train, y_val, y_test = split_data(
+        X, y, test_size=0.15, val_size=0.15, random_state=42, stratify=True
+    )
+
+    for y_part in (y_train, y_val, y_test):
+        assert y_part.mean() == pytest.approx(0.2, abs=0.05)
 
 
 def test_unit_check_quality_gate_passes_at_limit_and_fails_above():
@@ -107,3 +125,14 @@ def test_unit_main_runs_pipeline_with_project_settings(monkeypatch):
     main()
 
     assert len(calls) == 1 and calls[0] is SETTINGS
+
+
+def test_integration_main_runs_full_pipeline(tmp_path, monkeypatch):
+    """main() really runs the pipeline with SETTINGS (pointed to tmp_path) and writes the model and predictions."""
+    settings = _make_settings(tmp_path, quality_gate={"mape": 1_000_000.0})
+    monkeypatch.setattr("src.main.SETTINGS", settings)
+
+    main()
+
+    assert settings["paths"]["model"].is_file()
+    assert settings["paths"]["predictions"].is_file()

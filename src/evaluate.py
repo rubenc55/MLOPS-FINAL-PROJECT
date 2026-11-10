@@ -33,7 +33,8 @@ def _check_inputs(x_eval: pd.DataFrame, y_eval: pd.Series, problem_type: str) ->
         )
 
 
-def evaluate_model(model: Pipeline, x_eval: pd.DataFrame, y_eval: pd.Series,
+# X_eval keeps the contract's uppercase name (X is the feature matrix, as in scikit-learn).
+def evaluate_model(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series,  # pylint: disable=invalid-name
                    problem_type: str) -> dict[str, float]:
     """Score a fitted model on unseen data with the metrics of the quality gate.
 
@@ -42,9 +43,9 @@ def evaluate_model(model: Pipeline, x_eval: pd.DataFrame, y_eval: pd.Series,
     Outputs: {"mae": ..., "mape": ...} as plain Python floats; MAPE is a fraction, not a percentage.
     Why: main's quality gate reads these keys; scoring only unseen rows keeps the numbers honest.
     """
-    print(f"Evaluating model on {len(x_eval)} rows")
-    _check_inputs(x_eval, y_eval, problem_type)
-    y_pred = model.predict(x_eval)
+    print(f"Evaluating model on {len(X_eval)} rows")
+    _check_inputs(X_eval, y_eval, problem_type)
+    y_pred = model.predict(X_eval)
     return {
         "mae": float(mean_absolute_error(y_eval, y_pred)),
         "mape": float(mean_absolute_percentage_error(y_eval, y_pred)),

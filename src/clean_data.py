@@ -1,7 +1,8 @@
 """Apply fixed cleaning rules that learn nothing from the data.
 
 Inputs: a DataFrame from load_data (training) or new shipments (inference).
-Outputs: a new DataFrame with the same rows and columns, with text values trimmed.
+Outputs: a new DataFrame with the same columns and text values trimmed; in training, rows
+without a target are dropped.
 Used by: main, between load_data and validate.
 Why: stray spaces typed in the TMS (" Road") must not make validate reject a valid shipment.
 """
@@ -9,14 +10,17 @@ Why: stray spaces typed in the TMS (" Road") must not make validate reject a val
 import pandas as pd
 
 
-def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Trim leading and trailing spaces in every text column.
+def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> pd.DataFrame:
+    """Trim leading and trailing spaces in every text column; in training, drop rows with no target.
 
-    Inputs: df, the table to clean (it is not modified).
-    Outputs: a copy with the same rows and columns; numbers are unchanged.
-    Why: fixed rules, applied the same way in training and inference, learn nothing from the data.
+    Inputs: df_raw, the table to clean (it is not modified); target_column, the target name in
+    training mode, or None in inference mode.
+    Outputs: a copy with the same columns; numbers are unchanged. Training mode drops rows whose
+    target is missing; inference mode never drops rows.
+    Why: fixed rules, applied the same way in training and inference, learn nothing from the data;
+    a row without a cost cannot teach the model, but every new shipment needs a prediction.
     """
-    cleaned = df.copy()
+    cleaned = df_raw.copy()
     text_columns = [
         column
         for column in cleaned.columns
@@ -28,4 +32,9 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
             lambda value: value.strip() if isinstance(value, str) else value
         )
     print(f"Cleaned text columns: {text_columns}")
+    # A missing target column is left for validate to report with its clear message
+    if target_column is not None and target_column in cleaned.columns:
+        rows_before = len(cleaned)
+        cleaned = cleaned.dropna(subset=[target_column])
+        print(f"Dropped {rows_before - len(cleaned)} rows with a missing {target_column}")
     return cleaned

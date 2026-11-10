@@ -35,7 +35,8 @@ def _check_inputs(model: Pipeline, x_infer: pd.DataFrame, include_proba: bool) -
         )
 
 
-def run_inference(model: Pipeline, x_infer: pd.DataFrame,
+# X_infer keeps the contract's uppercase name (X is the feature matrix, as in scikit-learn).
+def run_inference(model: Pipeline, X_infer: pd.DataFrame,  # pylint: disable=invalid-name
                   include_proba: bool = False) -> pd.DataFrame:
     """Predict with a fitted Pipeline and return the results with the input index.
 
@@ -44,9 +45,9 @@ def run_inference(model: Pipeline, x_infer: pd.DataFrame,
     Outputs: DataFrame with column "prediction" (+ "probability"), same index as X_infer.
     Why: a fixed output schema lets main and the API rely on it; the input is never modified.
     """
-    _check_inputs(model, x_infer, include_proba)
-    logger.info("Running inference on %d rows", len(x_infer))
-    predictions = pd.DataFrame({"prediction": model.predict(x_infer)}, index=x_infer.index)
+    _check_inputs(model, X_infer, include_proba)
+    logger.info("Running inference on %d rows", len(X_infer))
+    predictions = pd.DataFrame({"prediction": model.predict(X_infer)}, index=X_infer.index)
     if include_proba:
-        predictions["probability"] = model.predict_proba(x_infer)[:, 1]
+        predictions["probability"] = model.predict_proba(X_infer)[:, 1]
     return predictions
