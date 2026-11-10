@@ -2,8 +2,8 @@
 
 Inputs: a fitted Pipeline, evaluation features and true costs
 (the validation split, passed by main).
-Outputs: {"mae": float, "mape": float}: MAE in USD, MAPE as a fraction (0.18 means 18%).
-Used by: main, which compares these values with the quality gate in SETTINGS.
+Outputs: {"mae": float, "mape": float}: MAE in USD, MAPE as a fraction, not a percentage.
+Used by: main, which compares these values with the quality gate in config.yaml.
 Why: the gate reads these exact keys and units;
 a wrong key or unit would block or release a model wrongly.
 """

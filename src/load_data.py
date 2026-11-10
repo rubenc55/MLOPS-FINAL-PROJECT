@@ -1,6 +1,6 @@
 """Read the raw shipments data for the pipeline, without changing it.
 
-Inputs: raw_data_path, the CSV file set in SETTINGS["paths"] (data/raw/shipments.csv).
+Inputs: raw_data_path, the CSV file set in config.yaml (paths.raw_data).
 Outputs: a DataFrame with every raw row and column.
 Used by: main, as the first pipeline step; its output goes to clean_data.
 Why: stop the pipeline early, with a clear message, when the raw file is missing, a folder or empty.

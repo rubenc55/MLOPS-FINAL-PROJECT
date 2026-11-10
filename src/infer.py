@@ -1,12 +1,12 @@
 """Turn new, unseen shipments into cost predictions with the saved Pipeline.
 
-Inputs: the fitted Pipeline (models/model.joblib) and new rows
+Inputs: the fitted Pipeline (saved at paths.model in config.yaml) and new rows
 with the same feature columns, no target.
 Outputs: a DataFrame with a fixed "prediction" column (+ "probability" if asked),
 same index as the input.
-Used by: main (batch, writes reports/predictions.csv) and the API in stage 3 (live requests).
+Used by: main (batch, writes paths.predictions) and the API in stage 3 (live requests).
 Why: no training happens here, so batch and live predictions match; keeping the index lets each
-prediction join back to its shipment_id.
+prediction join back to its ID column.
 """
 
 import logging
@@ -26,12 +26,12 @@ def _check_inputs(model: Pipeline, x_infer: pd.DataFrame, include_proba: bool) -
         )
     if len(x_infer) == 0:
         raise ValueError(
-            "Inference data is empty. Check the file in data/inference/ before predicting."
+            "Inference data is empty. Check the paths.inference_data file in config.yaml."
         )
     if include_proba and not hasattr(model, "predict_proba"):
         raise ValueError(
             "include_proba=True but the model cannot return probabilities (regression model). "
-            "Use include_proba=False for cost_usd predictions."
+            "Use include_proba=False for regression predictions."
         )
 
 
