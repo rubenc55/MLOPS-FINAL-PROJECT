@@ -10,6 +10,7 @@ dependencies:
   - numpy         # numeric arrays (cells 21 and 28)
   - scikit-learn  # ColumnTransformer, RandomForestRegressor, metrics (cells 24, 26 and 28)
   - joblib        # save and load the fitted model (cells 37 and 39)
+  - pyyaml        # read config.yaml (load_config in src/main.py)
     # Development tools (check the code, not needed to run it)
   - pytest      # test runner
   - pytest-cov  # coverage report: pytest --cov=src

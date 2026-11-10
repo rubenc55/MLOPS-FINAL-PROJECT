@@ -1,17 +1,22 @@
 """Run the whole shipping cost pipeline with one command: python -m src.main
 
-Inputs: SETTINGS below (paths, columns, rules, split, model parameters, quality gate).
-Outputs: models/model.joblib (only if the quality gate passes) and reports/predictions.csv.
-Used by: the team, CI and the stage 3 API; it is the only place where the modules are wired together.
+Inputs: config.yaml at the repo root (paths, columns, rules, split, model parameters,
+quality gate), read once into SETTINGS by load_config.
+Outputs: the clean training table, the model (only if the quality gate passes) and the
+predictions, written to the paths set in config.yaml.
+Used by: the team, CI and the stage 3 API;
+it is the only place where the modules are wired together.
 Why: one entry point and one source of settings, so every run follows the same steps.
 """
 
+import logging
 from pathlib import Path
 
 import pandas as pd
+import yaml
 from sklearn.model_selection import train_test_split
 
-from src.clean_data import clean_data
+from src.clean_data import clean_dataframe
 from src.evaluate import evaluate_model
 from src.features import get_feature_preprocessor
 from src.infer import run_inference
@@ -20,61 +25,57 @@ from src.train import train_model
 from src.utils import save_csv, save_model
 from src.validate import validate_dataframe
 
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-SETTINGS = {
-    "paths": {
-        "raw_data": PROJECT_ROOT / "data" / "raw" / "shipments.csv",
-        "inference_data": PROJECT_ROOT / "data" / "inference" / "new_shipments.csv",
-        "model": PROJECT_ROOT / "models" / "model.joblib",
-        "predictions": PROJECT_ROOT / "reports" / "predictions.csv",
-    },
-    "problem": {"target_column": "cost_usd", "problem_type": "regression", "id_column": "shipment_id"},
-    "features": {
-        "categorical": ["transport_mode", "cargo_type"],
-        "numeric": ["distance_km", "weight_kg", "volume_m3", "urgent", "month"],
-    },
-    # Keys match validate_dataframe's extra parameters, so main passes them with **settings["validation"]
-    "validation": {
-        "allowed_values": {
-            "transport_mode": ["Road", "Sea", "Air"],
-            "cargo_type": ["General", "Refrigerated", "Hazardous"],
-            "urgent": [0, 1],
-        },
-        # Historical min-max (TEAM_BRIEF); business still has to confirm these limits
-        "numeric_ranges": {
-            "distance_km": (50, 12000),
-            "weight_kg": (10, 9900),
-            "volume_m3": (0.028, 93.213),
-            "month": (1, 12),
-        },
-    },
-    # test_size and val_size are fractions of the whole dataset
-    "split": {"test_size": 0.15, "val_size": 0.15, "random_state": 42},
-    # No random_state here: train_model receives the seed from SETTINGS["split"]
-    "model_params": {"n_estimators": 200, "max_depth": None, "max_features": 0.5, "min_samples_leaf": 5},
-    # Lower is better: mape on validation must be <= its limit; mae is reported but not gated (README)
-    "quality_gate": {"mape": 0.18},
-}
+
+def load_config(config_path: Path) -> dict:
+    """Read the YAML settings file and turn its relative paths into absolute ones.
+
+    Inputs: config_path, the YAML file (config.yaml at the repo root).
+    Outputs: the settings dict with the same sections as the file; every entry of "paths" becomes
+    an absolute Path under PROJECT_ROOT.
+    Why: one source of settings for every run; paths relative to the repo root work from any folder.
+    """
+    config_path = Path(config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"Config file not found: {config_path}. Create config.yaml at the repo root."
+        )
+    with config_path.open(encoding="utf-8") as config_file:
+        settings = yaml.safe_load(config_file)
+    settings["paths"] = {name: PROJECT_ROOT / path for name, path in settings["paths"].items()}
+    return settings
 
 
-def split_data(
-    df: pd.DataFrame, test_size: float, val_size: float, random_state: int
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split the clean table into train, validation and test parts, before anything is fitted.
+SETTINGS = load_config(PROJECT_ROOT / "config.yaml")
 
-    Inputs: clean, validated table; test and validation shares of the WHOLE table; seed.
-    Outputs: (train, val, test) DataFrames with no shared rows.
+
+# Six arguments is the course contract for split_data, so its signature must not change.
+# X keeps the contract's uppercase name (X is the feature matrix, as in scikit-learn).
+def split_data(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    X: pd.DataFrame, y: pd.Series,  # pylint: disable=invalid-name
+    test_size: float, val_size: float, random_state: int, stratify: bool
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+    """Split features and target into train, validation and test parts, before anything is fitted.
+
+    Inputs: X (feature columns) and y (target) of the clean, validated table; test and validation
+    shares of the WHOLE table; seed; stratify (True keeps the class shares of y in every part).
+    Outputs: (X_train, X_val, X_test, y_train, y_val, y_test) with no shared rows.
     Why: the model learns only from train, the gate uses validation, and test stays sealed.
     """
-    # TODO: replace print with logging (Session 10)
-    print(f"Splitting {len(df)} rows: test {test_size}, validation {val_size}")
-    train_val, test = train_test_split(df, test_size=test_size, random_state=random_state)
+    logger.info("Splitting %d rows: test %s, validation %s", len(X), test_size, val_size)
+    x_rest, x_test, y_rest, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y if stratify else None
+    )
     # val_size is a share of the whole table, so rescale it to the rows left after removing test
     val_share = val_size / (1 - test_size)
-    train, val = train_test_split(train_val, test_size=val_share, random_state=random_state)
-    return train, val, test
+    x_train, x_val, y_train, y_val = train_test_split(
+        x_rest, y_rest, test_size=val_share, random_state=random_state,
+        stratify=y_rest if stratify else None,
+    )
+    return x_train, x_val, x_test, y_train, y_val, y_test
 
 
 def check_quality_gate(metrics: dict[str, float], quality_gate: dict[str, float]) -> None:
@@ -84,17 +85,20 @@ def check_quality_gate(metrics: dict[str, float], quality_gate: dict[str, float]
     Outputs: None if every metric is at or below its limit; otherwise raises ValueError.
     Why: a model that misses the business case (README) must never be saved or used for quotes.
     """
-    # TODO: replace print with logging (Session 10)
-    print(f"Checking quality gate {quality_gate} against validation metrics {metrics}")
+    logger.info("Checking quality gate %s against validation metrics %s", quality_gate, metrics)
     missing = [name for name in quality_gate if name not in metrics]
     if missing:
-        raise ValueError(f"Metrics missing for the quality gate: {missing}. Check evaluate_model output keys")
+        raise ValueError(
+            f"Metrics missing for the quality gate: {missing}. Check evaluate_model output keys"
+        )
     failures = [
-        f"{name} = {metrics[name]:.4f} > {limit}" for name, limit in quality_gate.items() if metrics[name] > limit
+        f"{name} = {metrics[name]:.4f} > {limit}"
+        for name, limit in quality_gate.items()
+        if metrics[name] > limit
     ]
     if failures:
         raise ValueError(f"Model not released, quality gate failed: {'; '.join(failures)}")
-    print("Quality gate met: every validation metric is within its limit")
+    logger.info("Quality gate met: every validation metric is within its limit")
 
 
 def _train_and_release(settings: dict) -> tuple:
@@ -102,38 +106,43 @@ def _train_and_release(settings: dict) -> tuple:
 
     Inputs: SETTINGS (paths, problem, features, validation, split, model_params, quality_gate).
     Outputs: (fitted Pipeline, validation metrics).
-    Why: one place wires load, clean, validate, split, recipe, fit, gate and save, in the agreed order.
+    Why: one place wires load, clean, validate, save the clean table, split, recipe, fit, gate
+    and save, in the agreed order.
     """
-    paths, problem, features = settings["paths"], settings["problem"], settings["features"]
+    problem, features = settings["problem"], settings["features"]
     feature_columns = features["categorical"] + features["numeric"]
     target = problem["target_column"]
 
-    # 1. Load, clean and validate the training table (target required and > 0)
-    df = clean_data(load_raw_data(paths["raw_data"]))
+    # 1. Load, clean and validate the training table (target required and > 0), then save it
+    df = clean_dataframe(load_raw_data(settings["paths"]["raw_data"]), target_column=target)
     validate_dataframe(
         df, [problem["id_column"]] + feature_columns, target_column=target, **settings["validation"]
     )
+    save_csv(df, settings["paths"]["clean_data"])
 
     # 2. Split before anything is fitted; the test part stays sealed
-    train, val, test = split_data(df, **settings["split"])
+    x_train, x_val, x_test, y_train, y_val, y_test = split_data(
+        df[feature_columns], df[target], **settings["split"]
+    )
 
     # 3. Build the unfitted recipe and fit it, with the model, on the train split only
-    preprocessor = get_feature_preprocessor(features["categorical"], features["numeric"])
     model = train_model(
-        train[feature_columns], train[target], preprocessor, problem["problem_type"],
+        x_train, y_train, get_feature_preprocessor(features["categorical"], features["numeric"]),
+        problem["problem_type"],
         model_params=settings["model_params"], random_state=settings["split"]["random_state"],
     )
 
     # 4. Quality gate on validation: if it fails, the error stops here and nothing is saved
-    val_metrics = evaluate_model(model, val[feature_columns], val[target], problem["problem_type"])
+    val_metrics = evaluate_model(model, x_val, y_val, problem["problem_type"])
     check_quality_gate(val_metrics, settings["quality_gate"])
 
     # 5. Test is scored once, after the release decision, only to report it
-    test_metrics = evaluate_model(model, test[feature_columns], test[target], problem["problem_type"])
-    # TODO: replace print with logging (Session 10)
-    print(f"Validation metrics: {val_metrics} | Test metrics (report only): {test_metrics}")
+    test_metrics = evaluate_model(model, x_test, y_test, problem["problem_type"])
+    logger.info(
+        "Validation metrics: %s | Test metrics (report only): %s", val_metrics, test_metrics
+    )
 
-    save_model(model, paths["model"])
+    save_model(model, settings["paths"]["model"])
     return model, val_metrics
 
 
@@ -141,15 +150,17 @@ def _predict_new_shipments(settings: dict, model) -> pd.DataFrame:
     """Predict the cost of each new shipment and save it next to its ID.
 
     Inputs: SETTINGS (paths, problem, features, validation) and the released Pipeline.
-    Outputs: DataFrame with the ID column and "prediction", also saved to SETTINGS["paths"]["predictions"].
-    Why: same cleaning, rules and recipe as training (no skew); the ID keeps every estimate traceable.
+    Outputs: DataFrame with the ID column and "prediction",
+    also saved to SETTINGS["paths"]["predictions"].
+    Why: same cleaning, rules and recipe as training (no skew);
+    the ID keeps every estimate traceable.
     """
     paths, problem, features = settings["paths"], settings["problem"], settings["features"]
     feature_columns = features["categorical"] + features["numeric"]
     id_column = problem["id_column"]
 
     # 1. Same cleaning and rules as training, without the target; one bad shipment stops the batch
-    df = clean_data(load_raw_data(paths["inference_data"]))
+    df = clean_dataframe(load_raw_data(paths["inference_data"]))
     validate_dataframe(df, [id_column] + feature_columns, **settings["validation"])
 
     # 2. Predict from the feature columns only, then put the ID back as the first column
@@ -157,8 +168,7 @@ def _predict_new_shipments(settings: dict, model) -> pd.DataFrame:
     output = pd.concat([df[[id_column]], predictions], axis=1)
 
     save_csv(output, paths["predictions"])
-    # TODO: replace print with logging (Session 10)
-    print(f"Saved {len(output)} predictions to {paths['predictions']}")
+    logger.info("Saved %d predictions to %s", len(output), paths["predictions"])
     return output
 
 
@@ -169,11 +179,13 @@ def run_pipeline(settings: dict) -> dict[str, float]:
     Outputs: validation metrics of the released model.
     Why: settings as a parameter lets tests run the whole pipeline without touching real folders.
     """
-    # TODO: replace print with logging (Session 10)
-    print("Starting the shipping cost pipeline")
+    logger.info("Starting the shipping cost pipeline")
     model, val_metrics = _train_and_release(settings)
     _predict_new_shipments(settings, model)
-    print(f"Done. Model: {settings['paths']['model']} | Predictions: {settings['paths']['predictions']}")
+    logger.info(
+        "Done. Model: %s | Predictions: %s",
+        settings["paths"]["model"], settings["paths"]["predictions"],
+    )
     return val_metrics
 
 
@@ -183,10 +195,11 @@ def main() -> None:
     Inputs: none (uses SETTINGS). Outputs: model and predictions files on disk.
     Why: one command for the team, CI and later the stage 3 API.
     """
-    # TODO: replace print with logging (Session 10)
-    print("Running the pipeline with the project SETTINGS")
+    # Only the entry point configures logging; every module just writes to its own logger
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger.info("Running the pipeline with the project SETTINGS")
     run_pipeline(SETTINGS)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

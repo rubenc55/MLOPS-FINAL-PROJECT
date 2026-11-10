@@ -1,14 +1,57 @@
 # config.yaml  [Settings: single source of truth]
 # -------------------------------------------------------------------
 # Purpose   Every NON-SECRET setting the pipeline needs, in one place
-# Read by   main.py (stage 3: through src/config.py), later also api.py
-# Why       Change the target, features or split sizes without touching code
+# Read by   src/main.py: SETTINGS = load_config(PROJECT_ROOT / "config.yaml"); later also api.py
+# Why       Change the target, features, rules, split or model without touching code
 # Never     Secrets (API keys, passwords). Those go in .env
-#
-# Typical sections
-#   paths     where raw data, model, inference data and predictions live
-#   problem   target column, problem type (classification or regression), ID column
-#   split     test size, validation size, random seed
-#
-# Stage 2: the same values live in a SETTINGS dictionary at the top of src/main.py
-# Stage 3: main.py reads this file instead, with the same key names
+# Paths     Relative to the repo root; load_config turns them into absolute paths
+
+# Where the inputs and outputs live. Data, model and report files are never committed (.gitignore)
+paths:
+  raw_data: data/raw/shipments.csv
+  inference_data: data/inference/new_shipments.csv
+  clean_data: data/processed/clean.csv    # written in training, after clean and validate
+  model: models/model.joblib              # written only if the quality gate passes
+  predictions: reports/predictions.csv
+
+problem:
+  target_column: cost_usd
+  problem_type: regression
+  id_column: shipment_id                  # kept next to each prediction, never used as a feature
+
+features:
+  categorical: [transport_mode, cargo_type]
+  numeric: [distance_km, weight_kg, volume_m3, urgent, month]
+
+# Keys match validate_dataframe's extra parameters, so main passes them with **settings["validation"]
+validation:
+  allowed_values:
+    transport_mode: [Road, Sea, Air]
+    cargo_type: [General, Refrigerated, Hazardous]
+    urgent: [0, 1]
+  # Historical min-max (TEAM_BRIEF); business still has to confirm these limits. [min, max], both included
+  numeric_ranges:
+    distance_km: [50, 12000]
+    weight_kg: [10, 9900]
+    volume_m3: [0.028, 93.213]
+    month: [1, 12]
+
+# test_size and val_size are fractions of the whole dataset;
+# stratify stays off because cost_usd is continuous (regression)
+split:
+  test_size: 0.15
+  val_size: 0.15
+  random_state: 42
+  stratify: false
+
+# RandomForestRegressor settings. No random_state here: train_model receives the seed from split
+model_params:
+  n_estimators: 200
+  max_depth: null
+  max_features: 0.5
+  min_samples_leaf: 5
+
+# Lower is better: mape on validation must be <= its limit or the model is not released;
+# mae is reported on every run but not gated (README)
+quality_gate:
+  mape: 0.18

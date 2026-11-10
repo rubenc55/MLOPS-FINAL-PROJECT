@@ -1,10 +1,12 @@
 """Turn new, unseen shipments into cost predictions with the saved Pipeline.
 
-Inputs: the fitted Pipeline (models/model.joblib) and new rows with the same feature columns, no target.
-Outputs: a DataFrame with a fixed "prediction" column (+ "probability" if asked), same index as the input.
-Used by: main (batch, writes reports/predictions.csv) and the API in stage 3 (live requests).
+Inputs: the fitted Pipeline (saved at paths.model in config.yaml) and new rows
+with the same feature columns, no target.
+Outputs: a DataFrame with a fixed "prediction" column (+ "probability" if asked),
+same index as the input.
+Used by: main (batch, writes paths.predictions) and the API in stage 3 (live requests).
 Why: no training happens here, so batch and live predictions match; keeping the index lets each
-prediction join back to its shipment_id.
+prediction join back to its ID column.
 """
 
 import logging
@@ -15,23 +17,27 @@ from sklearn.pipeline import Pipeline
 logger = logging.getLogger(__name__)
 
 
-def _check_inputs(model: Pipeline, X_infer: pd.DataFrame, include_proba: bool) -> None:
+def _check_inputs(model: Pipeline, x_infer: pd.DataFrame, include_proba: bool) -> None:
     """Fail fast with a clear message before any prediction happens."""
-    if not isinstance(X_infer, pd.DataFrame):
+    if not isinstance(x_infer, pd.DataFrame):
         raise TypeError(
-            f"X_infer must be a pandas DataFrame, got {type(X_infer).__name__}. "
+            f"X_infer must be a pandas DataFrame, got {type(x_infer).__name__}. "
             "Pass the cleaned and validated inference rows from main."
         )
-    if len(X_infer) == 0:
-        raise ValueError("Inference data is empty. Check the file in data/inference/ before predicting.")
+    if len(x_infer) == 0:
+        raise ValueError(
+            "Inference data is empty. Check the paths.inference_data file in config.yaml."
+        )
     if include_proba and not hasattr(model, "predict_proba"):
         raise ValueError(
             "include_proba=True but the model cannot return probabilities (regression model). "
-            "Use include_proba=False for cost_usd predictions."
+            "Use include_proba=False for regression predictions."
         )
 
 
-def run_inference(model: Pipeline, X_infer: pd.DataFrame, include_proba: bool = False) -> pd.DataFrame:
+# X_infer keeps the contract's uppercase name (X is the feature matrix, as in scikit-learn).
+def run_inference(model: Pipeline, X_infer: pd.DataFrame,  # pylint: disable=invalid-name
+                  include_proba: bool = False) -> pd.DataFrame:
     """Predict with a fitted Pipeline and return the results with the input index.
 
     Inputs: fitted Pipeline from train, X_infer (new rows with the feature columns),

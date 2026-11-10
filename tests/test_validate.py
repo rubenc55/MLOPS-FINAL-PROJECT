@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from src.clean_data import clean_data
+from src.clean_data import clean_dataframe
 from src.validate import validate_dataframe
 
 
@@ -25,11 +25,15 @@ def _make_df() -> pd.DataFrame:
 
 
 def test_unit_validate_dataframe_valid_table_passes():
-    """A table that meets every rule passes, in training (with target) and inference (without target)."""
+    """A table that meets every rule returns True, in training (with target) and inference (without target)."""
     df = _make_df()
 
-    validate_dataframe(df, REQUIRED, target_column="cost_usd", allowed_values=ALLOWED, numeric_ranges=RANGES)
-    validate_dataframe(df.drop(columns="cost_usd"), REQUIRED, allowed_values=ALLOWED, numeric_ranges=RANGES)
+    assert validate_dataframe(
+        df, REQUIRED, target_column="cost_usd", allowed_values=ALLOWED, numeric_ranges=RANGES
+    ) is True
+    assert validate_dataframe(
+        df.drop(columns="cost_usd"), REQUIRED, allowed_values=ALLOWED, numeric_ranges=RANGES
+    ) is True
 
 
 def test_unit_validate_dataframe_missing_column_raises():
@@ -72,10 +76,27 @@ def test_unit_validate_dataframe_lists_every_problem_in_one_error():
 
 
 def test_integration_validate_after_clean_data():
-    """A value with stray spaces (" Road ") passes validation once clean_data has trimmed it."""
+    """A value with stray spaces (" Road ") passes validation once clean_dataframe has trimmed it."""
     df = _make_df()
     df.loc[0, "transport_mode"] = " Road "
 
-    cleaned = clean_data(df)
+    cleaned = clean_dataframe(df, target_column="cost_usd")
 
     validate_dataframe(cleaned, REQUIRED, target_column="cost_usd", allowed_values=ALLOWED, numeric_ranges=RANGES)
+
+
+def test_unit_validate_dataframe_missing_values_raise():
+    """A missing value in a required column stops the pipeline, and the message counts it."""
+    df = _make_df()
+    df.loc[0, "weight_kg"] = None
+
+    with pytest.raises(ValueError, match="weight_kg: 1 missing values"):
+        validate_dataframe(df, REQUIRED, allowed_values=ALLOWED, numeric_ranges=RANGES)
+
+
+def test_unit_validate_dataframe_skips_rules_for_absent_columns():
+    """A value rule for a column that is not in the table is skipped; only required columns must exist."""
+    df = _make_df()
+    allowed = {**ALLOWED, "cargo_type": ["General", "Refrigerated", "Hazardous"]}
+
+    validate_dataframe(df, REQUIRED, allowed_values=allowed, numeric_ranges=RANGES)
