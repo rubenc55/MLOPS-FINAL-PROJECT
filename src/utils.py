@@ -17,13 +17,15 @@ def load_csv(filepath: Path) -> pd.DataFrame:
 
     Inputs: filepath, the CSV file to read.
     Outputs: a DataFrame with the file's rows and columns.
-    Why: fail fast if the file is missing, and keep column names clean in CSV files exported by Excel.
+    Why: fail fast if the file is missing,
+    and keep column names clean in CSV files exported by Excel.
     """
-    # TODO: replace print with logging (Session 10)
     print(f"Loading CSV: {filepath}")
     filepath = Path(filepath)
     if not filepath.is_file():
-        raise FileNotFoundError(f"CSV file not found: {filepath}. Check the path in SETTINGS['paths'].")
+        raise FileNotFoundError(
+            f"CSV file not found: {filepath}. Check the path in SETTINGS['paths']."
+        )
     return pd.read_csv(filepath, encoding="utf-8-sig")
 
 
@@ -34,7 +36,6 @@ def save_csv(df: pd.DataFrame, filepath: Path) -> None:
     Outputs: none; the file is written and missing parent folders are created.
     Why: index=False keeps the file identical to the data, so load_csv returns the same table.
     """
-    # TODO: replace print with logging (Session 10)
     print(f"Saving CSV: {filepath}")
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -48,7 +49,6 @@ def save_model(model, filepath: Path) -> None:
     Outputs: none; the file is written and missing parent folders are created.
     Why: the saved Pipeline keeps its preprocessing, so inference uses exactly the trained recipe.
     """
-    # TODO: replace print with logging (Session 10)
     print(f"Saving model: {filepath}")
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -62,9 +62,10 @@ def load_model(filepath: Path):
     Outputs: the fitted model, ready to predict.
     Why: fail fast with a clear message if the model was not trained yet or the path is wrong.
     """
-    # TODO: replace print with logging (Session 10)
     print(f"Loading model: {filepath}")
     filepath = Path(filepath)
     if not filepath.is_file():
-        raise FileNotFoundError(f"Model file not found: {filepath}. Run the pipeline first: python -m src.main")
+        raise FileNotFoundError(
+            f"Model file not found: {filepath}. Run the pipeline first: python -m src.main"
+        )
     return joblib.load(filepath)

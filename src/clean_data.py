@@ -20,10 +20,12 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     text_columns = [
         column
         for column in cleaned.columns
-        if pd.api.types.is_object_dtype(cleaned[column]) or pd.api.types.is_string_dtype(cleaned[column])
+        if pd.api.types.is_object_dtype(cleaned[column])
+        or pd.api.types.is_string_dtype(cleaned[column])
     ]
     for column in text_columns:
-        cleaned[column] = cleaned[column].map(lambda value: value.strip() if isinstance(value, str) else value)
-    # TODO: replace print with logging (Session 10)
+        cleaned[column] = cleaned[column].map(
+            lambda value: value.strip() if isinstance(value, str) else value
+        )
     print(f"Cleaned text columns: {text_columns}")
     return cleaned

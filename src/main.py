@@ -2,7 +2,8 @@
 
 Inputs: SETTINGS below (paths, columns, rules, split, model parameters, quality gate).
 Outputs: models/model.joblib (only if the quality gate passes) and reports/predictions.csv.
-Used by: the team, CI and the stage 3 API; it is the only place where the modules are wired together.
+Used by: the team, CI and the stage 3 API;
+it is the only place where the modules are wired together.
 Why: one entry point and one source of settings, so every run follows the same steps.
 """
 
@@ -30,12 +31,15 @@ SETTINGS = {
         "model": PROJECT_ROOT / "models" / "model.joblib",
         "predictions": PROJECT_ROOT / "reports" / "predictions.csv",
     },
-    "problem": {"target_column": "cost_usd", "problem_type": "regression", "id_column": "shipment_id"},
+    "problem": {
+        "target_column": "cost_usd", "problem_type": "regression", "id_column": "shipment_id"
+    },
     "features": {
         "categorical": ["transport_mode", "cargo_type"],
         "numeric": ["distance_km", "weight_kg", "volume_m3", "urgent", "month"],
     },
-    # Keys match validate_dataframe's extra parameters, so main passes them with **settings["validation"]
+    # Keys match validate_dataframe's extra parameters,
+    # so main passes them with **settings["validation"]
     "validation": {
         "allowed_values": {
             "transport_mode": ["Road", "Sea", "Air"],
@@ -53,8 +57,11 @@ SETTINGS = {
     # test_size and val_size are fractions of the whole dataset
     "split": {"test_size": 0.15, "val_size": 0.15, "random_state": 42},
     # No random_state here: train_model receives the seed from SETTINGS["split"]
-    "model_params": {"n_estimators": 200, "max_depth": None, "max_features": 0.5, "min_samples_leaf": 5},
-    # Lower is better: mape on validation must be <= its limit; mae is reported but not gated (README)
+    "model_params": {
+        "n_estimators": 200, "max_depth": None, "max_features": 0.5, "min_samples_leaf": 5
+    },
+    # Lower is better: mape on validation must be <= its limit;
+    # mae is reported but not gated (README)
     "quality_gate": {"mape": 0.18},
 }
 
@@ -68,7 +75,6 @@ def split_data(
     Outputs: (train, val, test) DataFrames with no shared rows.
     Why: the model learns only from train, the gate uses validation, and test stays sealed.
     """
-    # TODO: replace print with logging (Session 10)
     print(f"Splitting {len(df)} rows: test {test_size}, validation {val_size}")
     train_val, test = train_test_split(df, test_size=test_size, random_state=random_state)
     # val_size is a share of the whole table, so rescale it to the rows left after removing test
@@ -84,13 +90,16 @@ def check_quality_gate(metrics: dict[str, float], quality_gate: dict[str, float]
     Outputs: None if every metric is at or below its limit; otherwise raises ValueError.
     Why: a model that misses the business case (README) must never be saved or used for quotes.
     """
-    # TODO: replace print with logging (Session 10)
     print(f"Checking quality gate {quality_gate} against validation metrics {metrics}")
     missing = [name for name in quality_gate if name not in metrics]
     if missing:
-        raise ValueError(f"Metrics missing for the quality gate: {missing}. Check evaluate_model output keys")
+        raise ValueError(
+            f"Metrics missing for the quality gate: {missing}. Check evaluate_model output keys"
+        )
     failures = [
-        f"{name} = {metrics[name]:.4f} > {limit}" for name, limit in quality_gate.items() if metrics[name] > limit
+        f"{name} = {metrics[name]:.4f} > {limit}"
+        for name, limit in quality_gate.items()
+        if metrics[name] > limit
     ]
     if failures:
         raise ValueError(f"Model not released, quality gate failed: {'; '.join(failures)}")
@@ -102,7 +111,8 @@ def _train_and_release(settings: dict) -> tuple:
 
     Inputs: SETTINGS (paths, problem, features, validation, split, model_params, quality_gate).
     Outputs: (fitted Pipeline, validation metrics).
-    Why: one place wires load, clean, validate, split, recipe, fit, gate and save, in the agreed order.
+    Why: one place wires load, clean, validate, split, recipe, fit, gate and save,
+    in the agreed order.
     """
     paths, problem, features = settings["paths"], settings["problem"], settings["features"]
     feature_columns = features["categorical"] + features["numeric"]
@@ -129,8 +139,9 @@ def _train_and_release(settings: dict) -> tuple:
     check_quality_gate(val_metrics, settings["quality_gate"])
 
     # 5. Test is scored once, after the release decision, only to report it
-    test_metrics = evaluate_model(model, test[feature_columns], test[target], problem["problem_type"])
-    # TODO: replace print with logging (Session 10)
+    test_metrics = evaluate_model(
+        model, test[feature_columns], test[target], problem["problem_type"]
+    )
     print(f"Validation metrics: {val_metrics} | Test metrics (report only): {test_metrics}")
 
     save_model(model, paths["model"])
@@ -141,8 +152,10 @@ def _predict_new_shipments(settings: dict, model) -> pd.DataFrame:
     """Predict the cost of each new shipment and save it next to its ID.
 
     Inputs: SETTINGS (paths, problem, features, validation) and the released Pipeline.
-    Outputs: DataFrame with the ID column and "prediction", also saved to SETTINGS["paths"]["predictions"].
-    Why: same cleaning, rules and recipe as training (no skew); the ID keeps every estimate traceable.
+    Outputs: DataFrame with the ID column and "prediction",
+    also saved to SETTINGS["paths"]["predictions"].
+    Why: same cleaning, rules and recipe as training (no skew);
+    the ID keeps every estimate traceable.
     """
     paths, problem, features = settings["paths"], settings["problem"], settings["features"]
     feature_columns = features["categorical"] + features["numeric"]
@@ -157,7 +170,6 @@ def _predict_new_shipments(settings: dict, model) -> pd.DataFrame:
     output = pd.concat([df[[id_column]], predictions], axis=1)
 
     save_csv(output, paths["predictions"])
-    # TODO: replace print with logging (Session 10)
     print(f"Saved {len(output)} predictions to {paths['predictions']}")
     return output
 
@@ -169,11 +181,13 @@ def run_pipeline(settings: dict) -> dict[str, float]:
     Outputs: validation metrics of the released model.
     Why: settings as a parameter lets tests run the whole pipeline without touching real folders.
     """
-    # TODO: replace print with logging (Session 10)
     print("Starting the shipping cost pipeline")
     model, val_metrics = _train_and_release(settings)
     _predict_new_shipments(settings, model)
-    print(f"Done. Model: {settings['paths']['model']} | Predictions: {settings['paths']['predictions']}")
+    print(
+        f"Done. Model: {settings['paths']['model']} | "
+        f"Predictions: {settings['paths']['predictions']}"
+    )
     return val_metrics
 
 
@@ -183,7 +197,6 @@ def main() -> None:
     Inputs: none (uses SETTINGS). Outputs: model and predictions files on disk.
     Why: one command for the team, CI and later the stage 3 API.
     """
-    # TODO: replace print with logging (Session 10)
     print("Running the pipeline with the project SETTINGS")
     run_pipeline(SETTINGS)
 

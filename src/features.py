@@ -44,7 +44,6 @@ def get_feature_preprocessor(
     Outputs: an unfitted ColumnTransformer.
     Why: reuse the same preparation during training and inference.
     """
-    # TODO: replace print with logging (Session 10)
     print("Building feature preprocessor")
 
     _validate_column_list(categorical_columns, "categorical_columns")
