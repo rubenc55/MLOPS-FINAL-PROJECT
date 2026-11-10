@@ -73,14 +73,21 @@ This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, pyte
 
 ## 3. Data
 
-Data files are never committed (see `.gitignore`), so add them locally before the first run:
+Nothing under `data/` or `models/` is committed, not even the folders (see `.gitignore`), so a fresh clone has no `data/` folder. Before the first run, create the two input folders from the repo root:
+
+```bash
+mkdir -p data/raw data/inference      # macOS, Linux or Git Bash
+mkdir data/raw, data/inference        # Windows PowerShell
+```
+
+Then put the input files in them:
 
 | File | Contents | Where it comes from |
 | --- | --- | --- |
 | `data/raw/shipments.csv` | Training data, one row per shipment: `shipment_id`, `transport_mode`, `cargo_type`, `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month`, `cost_usd` | Sheet `data` of `shipments.xlsx` (section 1), exported once as CSV (UTF-8) |
 | `data/inference/new_shipments.csv` | New shipments to price: the same columns without `cost_usd` | The shipments that need a cost estimate |
 
-To read the files from another location, change `paths.raw_data` and `paths.inference_data` in `config.yaml`.
+The output folders (`data/processed/`, `models/` and `reports/`) are created by the run itself. To read the inputs from another location, change `paths.raw_data` and `paths.inference_data` in `config.yaml`.
 
 ## 4. Run the pipeline
 
