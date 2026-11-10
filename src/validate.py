@@ -2,7 +2,7 @@
 
 Inputs: a cleaned DataFrame and the rules from SETTINGS
 (required columns, allowed values, numeric ranges).
-Outputs: nothing when the data is valid; a ValueError listing every problem otherwise.
+Outputs: True when the data is valid; a ValueError listing every problem otherwise.
 Used by: main, after clean_data, in training (with the target) and inference (without it).
 Why: wrong units or unknown categories must stop the pipeline instead of producing an invented cost.
 """
@@ -40,16 +40,16 @@ def _find_column_problems(df: pd.DataFrame, columns_to_check: list) -> list:
 
 def validate_dataframe(
     df: pd.DataFrame,
-    required_columns: list,
+    required_columns: list[str],
     target_column: str | None = None,
     allowed_values: dict | None = None,
     numeric_ranges: dict | None = None,
-) -> None:
+) -> bool:
     """Check the data against the agreed rules and raise one ValueError that lists every problem.
 
     Inputs: df; required_columns; target_column (training only, must be greater than 0);
     allowed_values {column: list of values}; numeric_ranges {column: (min, max)}, limits included.
-    Outputs: None when every rule passes.
+    Outputs: True when every rule passes; the data is never changed or fixed here.
     Why: the gate runs before training and inference, so bad data never reaches the model.
     """
     columns_to_check = list(required_columns) + ([target_column] if target_column else [])
@@ -62,3 +62,4 @@ def validate_dataframe(
     if problems:
         raise ValueError("Data validation failed:\n- " + "\n- ".join(problems))
     print(f"Data validation passed: {len(df)} rows")
+    return True

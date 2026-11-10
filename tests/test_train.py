@@ -10,6 +10,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.utils.validation import check_is_fitted
 
+from src.features import get_feature_preprocessor
 from src.train import train_model
 
 
@@ -48,7 +49,7 @@ def test_unit_train_returns_fitted_pipeline_with_preprocessor_and_model():
     model = train_model(X, y, _make_preprocessor(), problem_type="regression", model_params=PARAMS, random_state=42)
 
     assert isinstance(model, Pipeline)
-    assert list(model.named_steps) == ["preprocessor", "model"]
+    assert list(model.named_steps) == ["preprocess", "model"]
     assert isinstance(model.named_steps["model"], RandomForestRegressor)
     check_is_fitted(model)
     assert len(model.predict(X)) == len(X)
@@ -115,3 +116,26 @@ def test_unit_train_rejects_random_state_inside_model_params():
     with pytest.raises(ValueError, match="random_state"):
         train_model(X, y, _make_preprocessor(), problem_type="regression",
                     model_params={**PARAMS, "random_state": 1}, random_state=42)
+
+
+def test_unit_train_uses_contract_defaults():
+    """Without model_params and random_state, train_model fits with RandomForestRegressor defaults and seed 42."""
+    X, y = _make_data()
+
+    model = train_model(X, y, _make_preprocessor(), problem_type="regression")
+
+    params = model.named_steps["model"].get_params()
+    assert params["random_state"] == 42
+    assert params["n_estimators"] == RandomForestRegressor().n_estimators
+
+
+def test_integration_train_model_with_feature_preprocessor():
+    """The recipe from get_feature_preprocessor trains inside train_model and predicts every training row."""
+    X, y = _make_data()
+    preprocessor = get_feature_preprocessor(CATEGORICAL, NUMERIC)
+
+    model = train_model(X, y, preprocessor, problem_type="regression", model_params=PARAMS, random_state=42)
+    predictions = model.predict(X)
+
+    assert len(predictions) == len(X)
+    assert np.isfinite(predictions).all()

@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src.clean_data import clean_data
+from src.clean_data import clean_dataframe
 from src.evaluate import evaluate_model
 from src.features import get_feature_preprocessor
 from src.infer import run_inference
@@ -54,8 +54,9 @@ SETTINGS = {
             "month": (1, 12),
         },
     },
-    # test_size and val_size are fractions of the whole dataset
-    "split": {"test_size": 0.15, "val_size": 0.15, "random_state": 42},
+    # test_size and val_size are fractions of the whole dataset;
+    # stratify stays off because cost_usd is continuous (regression)
+    "split": {"test_size": 0.15, "val_size": 0.15, "random_state": 42, "stratify": False},
     # No random_state here: train_model receives the seed from SETTINGS["split"]
     "model_params": {
         "n_estimators": 200, "max_depth": None, "max_features": 0.5, "min_samples_leaf": 5
@@ -66,21 +67,30 @@ SETTINGS = {
 }
 
 
-def split_data(
-    df: pd.DataFrame, test_size: float, val_size: float, random_state: int
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split the clean table into train, validation and test parts, before anything is fitted.
+# Six arguments is the course contract for split_data, so its signature must not change.
+# X keeps the contract's uppercase name (X is the feature matrix, as in scikit-learn).
+def split_data(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    X: pd.DataFrame, y: pd.Series,  # pylint: disable=invalid-name
+    test_size: float, val_size: float, random_state: int, stratify: bool
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+    """Split features and target into train, validation and test parts, before anything is fitted.
 
-    Inputs: clean, validated table; test and validation shares of the WHOLE table; seed.
-    Outputs: (train, val, test) DataFrames with no shared rows.
+    Inputs: X (feature columns) and y (target) of the clean, validated table; test and validation
+    shares of the WHOLE table; seed; stratify (True keeps the class shares of y in every part).
+    Outputs: (X_train, X_val, X_test, y_train, y_val, y_test) with no shared rows.
     Why: the model learns only from train, the gate uses validation, and test stays sealed.
     """
-    print(f"Splitting {len(df)} rows: test {test_size}, validation {val_size}")
-    train_val, test = train_test_split(df, test_size=test_size, random_state=random_state)
+    print(f"Splitting {len(X)} rows: test {test_size}, validation {val_size}")
+    x_rest, x_test, y_rest, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y if stratify else None
+    )
     # val_size is a share of the whole table, so rescale it to the rows left after removing test
     val_share = val_size / (1 - test_size)
-    train, val = train_test_split(train_val, test_size=val_share, random_state=random_state)
-    return train, val, test
+    x_train, x_val, y_train, y_val = train_test_split(
+        x_rest, y_rest, test_size=val_share, random_state=random_state,
+        stratify=y_rest if stratify else None,
+    )
+    return x_train, x_val, x_test, y_train, y_val, y_test
 
 
 def check_quality_gate(metrics: dict[str, float], quality_gate: dict[str, float]) -> None:
@@ -114,37 +124,37 @@ def _train_and_release(settings: dict) -> tuple:
     Why: one place wires load, clean, validate, split, recipe, fit, gate and save,
     in the agreed order.
     """
-    paths, problem, features = settings["paths"], settings["problem"], settings["features"]
+    problem, features = settings["problem"], settings["features"]
     feature_columns = features["categorical"] + features["numeric"]
     target = problem["target_column"]
 
     # 1. Load, clean and validate the training table (target required and > 0)
-    df = clean_data(load_raw_data(paths["raw_data"]))
+    df = clean_dataframe(load_raw_data(settings["paths"]["raw_data"]), target_column=target)
     validate_dataframe(
         df, [problem["id_column"]] + feature_columns, target_column=target, **settings["validation"]
     )
 
     # 2. Split before anything is fitted; the test part stays sealed
-    train, val, test = split_data(df, **settings["split"])
+    x_train, x_val, x_test, y_train, y_val, y_test = split_data(
+        df[feature_columns], df[target], **settings["split"]
+    )
 
     # 3. Build the unfitted recipe and fit it, with the model, on the train split only
-    preprocessor = get_feature_preprocessor(features["categorical"], features["numeric"])
     model = train_model(
-        train[feature_columns], train[target], preprocessor, problem["problem_type"],
+        x_train, y_train, get_feature_preprocessor(features["categorical"], features["numeric"]),
+        problem["problem_type"],
         model_params=settings["model_params"], random_state=settings["split"]["random_state"],
     )
 
     # 4. Quality gate on validation: if it fails, the error stops here and nothing is saved
-    val_metrics = evaluate_model(model, val[feature_columns], val[target], problem["problem_type"])
+    val_metrics = evaluate_model(model, x_val, y_val, problem["problem_type"])
     check_quality_gate(val_metrics, settings["quality_gate"])
 
     # 5. Test is scored once, after the release decision, only to report it
-    test_metrics = evaluate_model(
-        model, test[feature_columns], test[target], problem["problem_type"]
-    )
+    test_metrics = evaluate_model(model, x_test, y_test, problem["problem_type"])
     print(f"Validation metrics: {val_metrics} | Test metrics (report only): {test_metrics}")
 
-    save_model(model, paths["model"])
+    save_model(model, settings["paths"]["model"])
     return model, val_metrics
 
 
@@ -162,7 +172,7 @@ def _predict_new_shipments(settings: dict, model) -> pd.DataFrame:
     id_column = problem["id_column"]
 
     # 1. Same cleaning and rules as training, without the target; one bad shipment stops the batch
-    df = clean_data(load_raw_data(paths["inference_data"]))
+    df = clean_dataframe(load_raw_data(paths["inference_data"]))
     validate_dataframe(df, [id_column] + feature_columns, **settings["validation"])
 
     # 2. Predict from the feature columns only, then put the ID back as the first column
