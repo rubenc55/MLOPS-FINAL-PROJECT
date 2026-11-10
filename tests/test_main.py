@@ -5,7 +5,9 @@ import copy
 import pandas as pd
 import pytest
 
-from src.main import SETTINGS, check_quality_gate, main, run_pipeline, split_data
+from src.main import (
+    PROJECT_ROOT, SETTINGS, check_quality_gate, load_config, main, run_pipeline, split_data
+)
 
 
 def _make_raw_df(n_rows: int = 60) -> pd.DataFrame:
@@ -40,6 +42,7 @@ def _make_settings(tmp_path, quality_gate: dict) -> dict:
     settings["paths"] = {
         "raw_data": raw_path,
         "inference_data": inference_path,
+        "clean_data": tmp_path / "processed" / "clean.csv",
         "model": tmp_path / "models" / "model.joblib",
         "predictions": tmp_path / "reports" / "predictions.csv",
     }
@@ -88,12 +91,13 @@ def test_unit_check_quality_gate_passes_at_limit_and_fails_above():
 
 
 def test_integration_run_pipeline_end_to_end(tmp_path):
-    """With a passing gate, the pipeline saves the model and one prediction per new shipment, with its ID."""
+    """With a passing gate, the pipeline saves the clean table, the model and one prediction per new shipment."""
     settings = _make_settings(tmp_path, quality_gate={"mae": 1_000_000.0, "mape": 1_000_000.0})
 
     metrics = run_pipeline(settings)
 
     assert set(metrics) == {"mae", "mape"}
+    assert len(pd.read_csv(settings["paths"]["clean_data"])) == 60
     assert settings["paths"]["model"].is_file()
     predictions = pd.read_csv(settings["paths"]["predictions"])
     assert list(predictions.columns) == ["shipment_id", "prediction"]
@@ -136,3 +140,30 @@ def test_integration_main_runs_full_pipeline(tmp_path, monkeypatch):
 
     assert settings["paths"]["model"].is_file()
     assert settings["paths"]["predictions"].is_file()
+
+
+def test_unit_load_config_resolves_paths_against_project_root(tmp_path):
+    """Relative paths in the YAML file become absolute paths under the repo root; other values stay as written."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("paths:\n  model: models/model.joblib\nquality_gate:\n  mape: 0.18\n", encoding="utf-8")
+
+    settings = load_config(config_path)
+
+    assert settings["paths"]["model"] == PROJECT_ROOT / "models" / "model.joblib"
+    assert settings["quality_gate"] == {"mape": 0.18}
+
+
+def test_unit_load_config_missing_file_raises(tmp_path):
+    """A config file that does not exist stops the run with a FileNotFoundError that names the file."""
+    with pytest.raises(FileNotFoundError, match="missing_config.yaml"):
+        load_config(tmp_path / "missing_config.yaml")
+
+
+def test_integration_project_config_has_every_setting_the_pipeline_reads():
+    """The repo's config.yaml loads every section and path main uses, with the agreed gate mape <= 0.18."""
+    settings = load_config(PROJECT_ROOT / "config.yaml")
+
+    assert set(settings) == {"paths", "problem", "features", "validation", "split", "model_params", "quality_gate"}
+    assert set(settings["paths"]) == {"raw_data", "inference_data", "clean_data", "model", "predictions"}
+    assert all(path.is_absolute() for path in settings["paths"].values())
+    assert settings["quality_gate"] == {"mape": 0.18}

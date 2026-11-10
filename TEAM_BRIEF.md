@@ -7,6 +7,7 @@
 - Target: cost_usd | Problem type: regression | ID column: shipment_id
 
 ## Pipeline
+- Settings: every value below (paths, target, features, validation rules, split, model, quality gate) lives in config.yaml at the repo root; src/main.py loads it with load_config into SETTINGS. Change settings there, not in code
 - Feature groups: categorical: transport_mode, cargo_type -> OneHotEncoder(handle_unknown="ignore") (text, 3 values each)
 - Feature groups: numeric: distance_km, weight_kg, volume_m3, urgent, month -> passthrough (no scaling for trees)
 - Excluded columns: shipment_id (identifier, kept next to each prediction for traceability)
@@ -20,7 +21,7 @@
 - features.py signature: get_feature_preprocessor(categorical_columns, numeric_columns), settings per group: none
 - Agreed extra parameters: validate_dataframe(allowed_values=None, numeric_ranges=None)
 - utils.py helpers: load_csv, save_csv, save_model, load_model
-- Environment: no packages beyond pandas, numpy, scikit-learn, joblib, pytest, flake8 (confirm in item 4)
+- Environment: no packages beyond pandas, numpy, scikit-learn, joblib, pyyaml (reads config.yaml), pytest, pytest-cov, flake8 (confirm in item 4)
 
 ## Decisions and owners
 - Decisions: quality gate -> mape <= 0.18 on validation; mae reported, not gated (2026-11-09, README release rule)

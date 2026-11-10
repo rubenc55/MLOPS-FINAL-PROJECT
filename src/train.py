@@ -1,9 +1,9 @@
 """Fit the feature recipe and the model together as one Pipeline on the train split.
 
 Inputs: X_train and y_train (train split, passed by main), the unfitted preprocessor from features,
-problem_type, model_params from SETTINGS and the random seed.
+problem_type, model_params from config.yaml and the random seed.
 Outputs: one fitted Pipeline (preprocessor + RandomForestRegressor),
-saved by main as models/model.joblib.
+saved by main at paths.model.
 Used by: main; the fitted Pipeline then goes to evaluate and infer.
 Why: fitting on the train split only keeps validation and test metrics honest, and one artifact
 means what we evaluate is exactly what we deploy.
@@ -51,7 +51,7 @@ def train_model(  # pylint: disable=too-many-arguments,too-many-positional-argum
 ) -> Pipeline:
     """Build preprocessor + RandomForestRegressor as one Pipeline and fit it on the train split.
 
-    Inputs: X_train with raw feature columns, y_train (cost_usd),
+    Inputs: X_train with raw feature columns, y_train (the target),
     the unfitted preprocessor from features,
     problem_type ("regression"), model_params (RandomForestRegressor settings), random_state (seed).
     Outputs: the fitted Pipeline with steps "preprocess" and "model".

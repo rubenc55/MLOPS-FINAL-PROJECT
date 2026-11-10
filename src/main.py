@@ -1,7 +1,9 @@
 """Run the whole shipping cost pipeline with one command: python -m src.main
 
-Inputs: SETTINGS below (paths, columns, rules, split, model parameters, quality gate).
-Outputs: models/model.joblib (only if the quality gate passes) and reports/predictions.csv.
+Inputs: config.yaml at the repo root (paths, columns, rules, split, model parameters,
+quality gate), read once into SETTINGS by load_config.
+Outputs: the clean training table, the model (only if the quality gate passes) and the
+predictions, written to the paths set in config.yaml.
 Used by: the team, CI and the stage 3 API;
 it is the only place where the modules are wired together.
 Why: one entry point and one source of settings, so every run follows the same steps.
@@ -11,6 +13,7 @@ import logging
 from pathlib import Path
 
 import pandas as pd
+import yaml
 from sklearn.model_selection import train_test_split
 
 from src.clean_data import clean_dataframe
@@ -26,47 +29,27 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-SETTINGS = {
-    "paths": {
-        "raw_data": PROJECT_ROOT / "data" / "raw" / "shipments.csv",
-        "inference_data": PROJECT_ROOT / "data" / "inference" / "new_shipments.csv",
-        "model": PROJECT_ROOT / "models" / "model.joblib",
-        "predictions": PROJECT_ROOT / "reports" / "predictions.csv",
-    },
-    "problem": {
-        "target_column": "cost_usd", "problem_type": "regression", "id_column": "shipment_id"
-    },
-    "features": {
-        "categorical": ["transport_mode", "cargo_type"],
-        "numeric": ["distance_km", "weight_kg", "volume_m3", "urgent", "month"],
-    },
-    # Keys match validate_dataframe's extra parameters,
-    # so main passes them with **settings["validation"]
-    "validation": {
-        "allowed_values": {
-            "transport_mode": ["Road", "Sea", "Air"],
-            "cargo_type": ["General", "Refrigerated", "Hazardous"],
-            "urgent": [0, 1],
-        },
-        # Historical min-max (TEAM_BRIEF); business still has to confirm these limits
-        "numeric_ranges": {
-            "distance_km": (50, 12000),
-            "weight_kg": (10, 9900),
-            "volume_m3": (0.028, 93.213),
-            "month": (1, 12),
-        },
-    },
-    # test_size and val_size are fractions of the whole dataset;
-    # stratify stays off because cost_usd is continuous (regression)
-    "split": {"test_size": 0.15, "val_size": 0.15, "random_state": 42, "stratify": False},
-    # No random_state here: train_model receives the seed from SETTINGS["split"]
-    "model_params": {
-        "n_estimators": 200, "max_depth": None, "max_features": 0.5, "min_samples_leaf": 5
-    },
-    # Lower is better: mape on validation must be <= its limit;
-    # mae is reported but not gated (README)
-    "quality_gate": {"mape": 0.18},
-}
+
+def load_config(config_path: Path) -> dict:
+    """Read the YAML settings file and turn its relative paths into absolute ones.
+
+    Inputs: config_path, the YAML file (config.yaml at the repo root).
+    Outputs: the settings dict with the same sections as the file; every entry of "paths" becomes
+    an absolute Path under PROJECT_ROOT.
+    Why: one source of settings for every run; paths relative to the repo root work from any folder.
+    """
+    config_path = Path(config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"Config file not found: {config_path}. Create config.yaml at the repo root."
+        )
+    with config_path.open(encoding="utf-8") as config_file:
+        settings = yaml.safe_load(config_file)
+    settings["paths"] = {name: PROJECT_ROOT / path for name, path in settings["paths"].items()}
+    return settings
+
+
+SETTINGS = load_config(PROJECT_ROOT / "config.yaml")
 
 
 # Six arguments is the course contract for split_data, so its signature must not change.
@@ -123,18 +106,19 @@ def _train_and_release(settings: dict) -> tuple:
 
     Inputs: SETTINGS (paths, problem, features, validation, split, model_params, quality_gate).
     Outputs: (fitted Pipeline, validation metrics).
-    Why: one place wires load, clean, validate, split, recipe, fit, gate and save,
-    in the agreed order.
+    Why: one place wires load, clean, validate, save the clean table, split, recipe, fit, gate
+    and save, in the agreed order.
     """
     problem, features = settings["problem"], settings["features"]
     feature_columns = features["categorical"] + features["numeric"]
     target = problem["target_column"]
 
-    # 1. Load, clean and validate the training table (target required and > 0)
+    # 1. Load, clean and validate the training table (target required and > 0), then save it
     df = clean_dataframe(load_raw_data(settings["paths"]["raw_data"]), target_column=target)
     validate_dataframe(
         df, [problem["id_column"]] + feature_columns, target_column=target, **settings["validation"]
     )
+    save_csv(df, settings["paths"]["clean_data"])
 
     # 2. Split before anything is fitted; the test part stays sealed
     x_train, x_val, x_test, y_train, y_val, y_test = split_data(

@@ -48,7 +48,7 @@ def save_csv(df: pd.DataFrame, filepath: Path) -> None:
 def save_model(model, filepath: Path) -> None:
     """Save a fitted model or Pipeline to disk with joblib.
 
-    Inputs: model, the fitted object; filepath, where to write it (e.g. models/model.joblib).
+    Inputs: model, the fitted object; filepath, where to write it (e.g. paths.model in config.yaml).
     Outputs: none; the file is written and missing parent folders are created.
     Why: the saved Pipeline keeps its preprocessing, so inference uses exactly the trained recipe.
     """

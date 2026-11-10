@@ -43,3 +43,9 @@ models/**
 reports/**
 !reports/
 !reports/README.md
+
+# Pipeline outputs and logs, named explicitly (the folder rules above already cover the first three)
+data/processed/*.csv
+models/*.joblib
+reports/*.csv
+logs/
