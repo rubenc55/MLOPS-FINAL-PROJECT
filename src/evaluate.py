@@ -8,9 +8,13 @@ Why: the gate reads these exact keys and units;
 a wrong key or unit would block or release a model wrongly.
 """
 
+import logging
+
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error
 from sklearn.pipeline import Pipeline
+
+logger = logging.getLogger(__name__)
 
 
 def _check_inputs(x_eval: pd.DataFrame, y_eval: pd.Series, problem_type: str) -> None:
@@ -43,7 +47,7 @@ def evaluate_model(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series,  # 
     Outputs: {"mae": ..., "mape": ...} as plain Python floats; MAPE is a fraction, not a percentage.
     Why: main's quality gate reads these keys; scoring only unseen rows keeps the numbers honest.
     """
-    print(f"Evaluating model on {len(X_eval)} rows")
+    logger.info("Evaluating model on %d rows", len(X_eval))
     _check_inputs(X_eval, y_eval, problem_type)
     y_pred = model.predict(X_eval)
     return {

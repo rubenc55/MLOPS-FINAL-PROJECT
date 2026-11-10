@@ -7,7 +7,11 @@ Used by: main, after clean_data, in training (with the target) and inference (wi
 Why: wrong units or unknown categories must stop the pipeline instead of producing an invented cost.
 """
 
+import logging
+
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def _find_value_problems(df: pd.DataFrame, allowed_values: dict, numeric_ranges: dict) -> list:
@@ -61,5 +65,5 @@ def validate_dataframe(
     problems += _find_value_problems(df, allowed_values or {}, numeric_ranges or {})
     if problems:
         raise ValueError("Data validation failed:\n- " + "\n- ".join(problems))
-    print(f"Data validation passed: {len(df)} rows")
+    logger.info("Data validation passed: %d rows", len(df))
     return True

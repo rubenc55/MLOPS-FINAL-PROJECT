@@ -6,10 +6,13 @@ Used by: load_data, main and infer.
 Why: one shared way to read and write files, so every module behaves the same.
 """
 
+import logging
 from pathlib import Path
 
 import joblib
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def load_csv(filepath: Path) -> pd.DataFrame:
@@ -20,7 +23,7 @@ def load_csv(filepath: Path) -> pd.DataFrame:
     Why: fail fast if the file is missing,
     and keep column names clean in CSV files exported by Excel.
     """
-    print(f"Loading CSV: {filepath}")
+    logger.info("Loading CSV: %s", filepath)
     filepath = Path(filepath)
     if not filepath.is_file():
         raise FileNotFoundError(
@@ -36,7 +39,7 @@ def save_csv(df: pd.DataFrame, filepath: Path) -> None:
     Outputs: none; the file is written and missing parent folders are created.
     Why: index=False keeps the file identical to the data, so load_csv returns the same table.
     """
-    print(f"Saving CSV: {filepath}")
+    logger.info("Saving CSV: %s", filepath)
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(filepath, index=False)
@@ -49,7 +52,7 @@ def save_model(model, filepath: Path) -> None:
     Outputs: none; the file is written and missing parent folders are created.
     Why: the saved Pipeline keeps its preprocessing, so inference uses exactly the trained recipe.
     """
-    print(f"Saving model: {filepath}")
+    logger.info("Saving model: %s", filepath)
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, filepath)
@@ -62,7 +65,7 @@ def load_model(filepath: Path):
     Outputs: the fitted model, ready to predict.
     Why: fail fast with a clear message if the model was not trained yet or the path is wrong.
     """
-    print(f"Loading model: {filepath}")
+    logger.info("Loading model: %s", filepath)
     filepath = Path(filepath)
     if not filepath.is_file():
         raise FileNotFoundError(
