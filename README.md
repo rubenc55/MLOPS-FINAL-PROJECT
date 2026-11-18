@@ -69,7 +69,15 @@ conda env create -f environment.yml
 conda activate shipping-cost
 ```
 
-This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, pytest, pytest-cov, flake8 and dvc. If you created the environment before `dvc` was added, update it with `conda env update -f environment.yml --prune`. Run every command below from the repo root with the environment active.
+This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, wandb, python-dotenv, pytest, pytest-cov, flake8 and dvc. If you created the environment before `wandb` was added, update it with `conda env update -f environment.yml --prune`. Run every command below from the repo root with the environment active.
+
+Secrets go in a `.env` file at the repo root, which Git ignores. Copy the names from `.env.example` and fill in your own values:
+
+```bash
+cp .env.example .env      # then set WANDB_API_KEY (wandb.ai > User settings > API keys)
+```
+
+Without `WANDB_API_KEY` the pipeline still runs; it only skips W&B tracking (section 4).
 
 ## 3. Data
 
@@ -114,6 +122,19 @@ It writes four files, none of them committed:
 
 Every run first deletes the model and predictions of the previous run. If the gate fails, the run stops with `Model not released, quality gate failed: ...` (also written to `logs/pipeline.log` as an ERROR), so `models/` and `reports/` stay empty and no model rejected by the gate, or older than it, can be deployed. If the data breaks a rule, it stops with `Data validation failed:` followed by every problem found.
 
+### Tracking and model registry
+
+`src/main.py` owns one W&B run per pipeline run (project `shipping-cost`, `tracking` in `config.yaml`). Each run records:
+
+| What | Where in W&B |
+| --- | --- |
+| Every setting of `config.yaml`, the md5 of `data/raw/shipments.csv` (the same hash as in `shipments.csv.dvc`) and the Git commit | Run config: `data_md5`, `git_commit` |
+| `val_mae`, `val_mape`, and after the gate `test_mae`, `test_mape` | Run metrics |
+| Why a run stopped (failed gate or bad data) | Run state failed, summary `error` |
+| The model, only if the gate passes and the predictions are written | Artifact `shipping_cost_model`, new version with aliases `latest` and `prod`, metadata with the hash, commit and metrics |
+
+So `prod` always points to the last model that met the gate, and any prod model leads back to its run, data version and commit. Without `WANDB_API_KEY` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing.
+
 ## 5. Test and check style
 
 ```bash
@@ -138,6 +159,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 | `split` | Test and validation shares of the whole dataset, seed, stratification | 0.15, 0.15, 42, off |
 | `model_params` | `RandomForestRegressor` settings | `n_estimators` 200, `max_depth` none, `max_features` 0.5, `min_samples_leaf` 5 |
 | `quality_gate` | Release limit per metric (lower is better) | `mape: 0.18` |
+| `tracking` | W&B mode, project, entity, model artifact name and the alias of the released model | `online`, `shipping-cost`, default entity, `shipping_cost_model`, `prod` |
 
 **Release rule** (the same in section 1, `TEAM_BRIEF.md`, `config.yaml` and `check_quality_gate` in `src/main.py`): the model that predicts `cost_usd` is released only if `mape` on the validation split is at most 0.18 (18%). `mae` is reported on every run but does not block the release.
 
@@ -190,6 +212,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 │   ├── utils.py              # shared read and write helpers
 │   ├── config.py             # load_config: config.yaml -> SETTINGS
 │   ├── logger.py             # setup_logging: console + logs/pipeline.log
+│   ├── tracking.py           # W&B run, metrics and prod model (called by main)
 │   └── main.py               # 0. orchestrator: python -m src.main
 ├── data/
 │   ├── raw/                  # shipments.csv.dvc in Git; shipments.csv from dvc pull

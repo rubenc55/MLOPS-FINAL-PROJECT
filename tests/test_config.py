@@ -38,7 +38,7 @@ def test_integration_project_config_has_every_setting_the_pipeline_reads():
     settings = load_config(CONFIG_PATH)
 
     assert set(settings) == {
-        "paths", "logging", "problem", "features", "validation", "split", "model_params", "quality_gate"
+        "paths", "logging", "problem", "features", "validation", "split", "model_params", "quality_gate", "tracking"
     }
     assert set(settings["paths"]) == {
         "raw_data", "inference_data", "clean_data", "model", "predictions", "log_file"
@@ -46,6 +46,7 @@ def test_integration_project_config_has_every_setting_the_pipeline_reads():
     assert all(path.is_absolute() for path in settings["paths"].values())
     assert settings["paths"]["log_file"] == PROJECT_ROOT / "logs" / "pipeline.log"
     assert settings["quality_gate"] == {"mape": 0.18}
+    assert settings["tracking"]["prod_alias"] == "prod"
     assert settings == SETTINGS
 
 

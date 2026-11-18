@@ -48,6 +48,7 @@ def _make_settings(tmp_path, quality_gate: dict) -> dict:
     }
     settings["model_params"] = {"n_estimators": 10}
     settings["quality_gate"] = quality_gate
+    settings["tracking"]["mode"] = "disabled"  # tests never create real W&B runs
     return settings
 
 
@@ -128,6 +129,42 @@ def test_integration_failed_gate_removes_model_from_earlier_run(tmp_path, caplog
     assert not settings["paths"]["model"].exists()
     assert not settings["paths"]["predictions"].exists()
     assert any(r.levelno == logging.ERROR and "quality gate failed: mape" in r.getMessage() for r in caplog.records)
+
+
+def _spy_tracking(monkeypatch) -> dict:
+    """Record main's calls to log_model and end_run, so a test can check what W&B would receive."""
+    calls = {"log_model": [], "end_run": []}
+    monkeypatch.setattr("src.main.log_model", lambda run, path, tracking, metadata: calls["log_model"].append(
+        (path, tracking["prod_alias"], metadata)))
+    monkeypatch.setattr("src.main.end_run", lambda run, error=None: calls["end_run"].append(error))
+    return calls
+
+
+def test_integration_passing_run_registers_model_as_prod(tmp_path, monkeypatch):
+    """A run that passes the gate registers the saved model once, as prod, with its data hash, commit and metrics."""
+    settings = _make_settings(tmp_path, quality_gate={"mape": 1_000_000.0})
+    calls = _spy_tracking(monkeypatch)
+
+    run_pipeline(settings)
+
+    assert len(calls["log_model"]) == 1
+    path, alias, metadata = calls["log_model"][0]
+    assert path == settings["paths"]["model"] and path.is_file() and alias == "prod"
+    assert len(metadata["data_md5"]) == 32 and metadata["git_commit"]
+    assert set(metadata["val_metrics"]) == set(metadata["test_metrics"]) == {"mae", "mape"}
+    assert calls["end_run"] == [None]
+
+
+def test_integration_failed_gate_registers_nothing_and_fails_the_run(tmp_path, monkeypatch):
+    """A failed gate never reaches the registry, and the W&B run is closed as failed with the gate message."""
+    settings = _make_settings(tmp_path, quality_gate={"mape": 0.0})
+    calls = _spy_tracking(monkeypatch)
+
+    with pytest.raises(ValueError, match="quality gate failed"):
+        run_pipeline(settings)
+
+    assert calls["log_model"] == []
+    assert len(calls["end_run"]) == 1 and "quality gate failed" in str(calls["end_run"][0])
 
 
 def test_unit_check_quality_gate_missing_metric_raises():
