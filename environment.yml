@@ -15,3 +15,4 @@ dependencies:
   - pytest      # test runner
   - pytest-cov  # coverage report: pytest --cov=src
   - flake8      # style checker
+  - dvc         # data versioning: dvc pull gets the data from DagsHub, dvc repro runs the pipeline

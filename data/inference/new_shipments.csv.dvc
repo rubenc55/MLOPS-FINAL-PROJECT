@@ -1,0 +1,5 @@
+outs:
+- md5: 27ead833a94ca37a8802ce6dc3911cc7
+  size: 871
+  hash: md5
+  path: new_shipments.csv
