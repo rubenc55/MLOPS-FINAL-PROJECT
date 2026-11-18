@@ -112,7 +112,7 @@ It writes four files, none of them committed:
 | Predictions: `shipment_id` and `prediction` (cost in USD) per new shipment | `reports/predictions.csv` (`paths.predictions`) | After the model is released |
 | Run log: every step, the validation and test metrics and the gate decision | `logs/pipeline.log` (`paths.log_file`) | On every run, appended (also when the gate or validation fails); `dvc repro` starts it fresh |
 
-If the gate fails, the run stops with `Model not released, quality gate failed: ...` and writes no model and no predictions. If the data breaks a rule, it stops with `Data validation failed:` followed by every problem found.
+Every run first deletes the model and predictions of the previous run. If the gate fails, the run stops with `Model not released, quality gate failed: ...` (also written to `logs/pipeline.log` as an ERROR), so `models/` and `reports/` stay empty and no model rejected by the gate, or older than it, can be deployed. If the data breaks a rule, it stops with `Data validation failed:` followed by every problem found.
 
 ## 5. Test and check style
 
