@@ -120,7 +120,7 @@ It writes four files, none of them committed:
 | Clean training table | `data/processed/clean.csv` (`paths.clean_data`) | On every run, after cleaning and validation |
 | Trained model (one Pipeline: `preprocess` + `model`) | `models/model.joblib` (`paths.model`) | Only if `mape` on validation is at most 0.18 |
 | Predictions: `shipment_id` and `prediction` (cost in USD) per new shipment | `reports/predictions.csv` (`paths.predictions`) | After the model is released |
-| Run log: every step, the validation and test metrics and the gate decision | `logs/pipeline.log` (`paths.log_file`) | On every run, appended (also when the gate or validation fails); `dvc repro` starts it fresh |
+| Run log: every step, the validation and test metrics and the gate decision | `logs/pipeline.log` (`paths.log_file`) | On every run, appended (also when the gate or validation fails); not a DVC output, so its timestamps never change `dvc.lock` |
 
 Every run first deletes the model and predictions of the previous run. If the gate fails, the run stops with `Model not released, quality gate failed: ...` (also written to `logs/pipeline.log` as an ERROR), so `models/` and `reports/` stay empty and no model rejected by the gate, or older than it, can be deployed. If the data breaks a rule, it stops with `Data validation failed:` followed by every problem found.
 
@@ -183,6 +183,19 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 - `tests/` has one file per module (`test_<module>.py`) with unit tests and at least one integration test. `tests/test_main.py` also runs `main()` end to end on temporary files, so the real `data/`, `models/` and `reports/` folders are not touched.
 - Course gate: every test passes, none is skipped, and branch coverage is at least 90% (currently 100%). flake8 prints nothing.
 
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request into `dev` or `main` and on every push to them, with the exact packages of `conda-lock.yml`. Each check is its own job, so a failing one shows by name:
+
+| Job | Runs | Fails when |
+| --- | --- | --- |
+| `lint (flake8)` | `flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests` | flake8 prints anything |
+| `test (pytest, 90% branch coverage)` | `pytest --cov=src --cov-branch --cov-fail-under=90` | a test fails or branch coverage is under 90% |
+| `pipeline (dvc repro, quality gate)` | `dvc pull`, then `dvc status` must be clean, then `dvc repro --force` | `dvc.lock` is stale, data validation fails or the gate is not met |
+| `docker (build, /health, /predict)` | `docker build -t api .` with the model of the pipeline job, then calls the running container | the image does not build, or `/health`, `/predict` or the 422 check fail |
+
+With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. The pipeline job needs the GitHub Secrets `DAGSHUB_USER` and `DAGSHUB_TOKEN` for `dvc pull`. It registers the model in W&B (`WANDB_API_KEY`) only on pushes to `main`, so a pull request never moves `prod`; the run log is kept as the `pipeline-log` artifact of each run.
+
 ## 7. Configuration
 
 [`config.yaml`](config.yaml) is the single source of every non-secret setting. `src/config.py` reads it once with `load_config` into `SETTINGS` and turns the relative paths into absolute paths under the repo root; `src/main.py` (and later the API) imports `SETTINGS` from there. To change a setting, edit `config.yaml` and rerun; no code changes are needed. Secrets never go here: they belong in `.env`, whose names are listed in `.env.example`.
@@ -239,7 +252,9 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 ├── pytest.ini                # test runner settings
 ├── LICENSE
 ├── .github/
-│   └── pull_request_template.md
+│   ├── pull_request_template.md
+│   └── workflows/
+│       └── ci.yml            # CI: lint, test, pipeline with gate, Docker build on every pull request
 ├── notebooks/                # the "lab": exploration only (MLOps_Cost_Prediction.ipynb)
 ├── src/                      # the "factory": one job per module, one logger per module
 │   ├── __init__.py           # makes src a package

@@ -27,16 +27,13 @@ htmlcov/
 .vscode/*
 !.vscode/settings.json
 
-# Data: never in Git by default (it may hold personal or confidential information)
-data/**
-!data/
-!data/raw/
-!data/processed/
-!data/inference/
-!data/**/.gitkeep
-# DVC pointers are committed; the CSV they point to lives on DagsHub (dvc pull)
-!data/raw/*.dvc
-!data/inference/*.dvc
+# Data: never in Git by default (it may hold personal or confidential information).
+# Only the DVC pointers (*.dvc) are committed; the files they point to live on DagsHub (dvc pull).
+# Written as files-then-exceptions, not data/**, because DVC reads .gitignore too and skips
+# pointers hidden by data/**, so dvc pull would not download the input data
+data/**/*
+!data/**/
+!data/**/*.dvc
 
 # Generated outputs (recreated by: python -m src.main)
 models/**

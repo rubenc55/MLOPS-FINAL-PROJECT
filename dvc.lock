@@ -91,10 +91,6 @@ stages:
       hash: md5
       md5: 4db88fc35cedc15342d7dbb78b8af09d
       size: 243653
-    - path: logs/pipeline.log
-      hash: md5
-      md5: 465dd0f9dd52c725f5daf96c4ed28b71
-      size: 3260
     - path: models/model.joblib
       hash: md5
       md5: e2286c980eacabe8c7c12c0190e2041e
