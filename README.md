@@ -143,7 +143,7 @@ So `prod` always points to the last model that met the gate, and any prod model 
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /health` | `{"status": "ok", "model": "model.joblib"}` when the service is up |
+| `GET /health` | `status` ok, the release `version`, the `model` file and `model_info`: W&B version, run, Git commit and data md5 of the prod model (`{}` for a model trained locally) |
 | `POST /predict` | Estimated `cost_usd` per shipment, in the request order |
 | `GET /docs` | The contract and a form to try it, with the sample below (the only UI) |
 
@@ -196,7 +196,39 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 
 With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. The pipeline job needs the GitHub Secrets `DAGSHUB_USER` and `DAGSHUB_TOKEN` for `dvc pull`. It registers the model in W&B (`WANDB_API_KEY`) only on pushes to `main`, so a pull request never moves `prod`; the run log is kept as the `pipeline-log` artifact of each run.
 
-## 7. Configuration
+## 7. Release, deploy and roll back
+
+Nothing reaches the live service without a person publishing a GitHub Release from `main`; [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) does the rest:
+
+| Step | Job | Stops the release when |
+| --- | --- | --- |
+| 1 | `release guard (tag on main)` ([`release-guard.yml`](.github/workflows/release-guard.yml)) | the tag is not on `main` |
+| 2 | CI again on the tagged commit (all four jobs of `ci.yml`) | any check is red |
+| 3 | `build release image (prod model)`: `python -m scripts.fetch_prod_model` downloads `shipping_cost_model:prod` from W&B with its lineage (`models/model_info.json`), then `docker build --build-arg APP_VERSION=<tag>` | there is no prod model or the image does not build |
+| 4 | Smoke test of the image, then push to `ghcr.io/<owner>/<repo>:<tag>` | `scripts/smoke_test.py` fails |
+| 5 | `deploy to Render and smoke test`: the Render deploy hook gets the image of this tag, then `scripts/smoke_test.py` waits until the live `/health` reports the tag | the live service does not answer, or answers with the old tag |
+
+To release:
+
+1. Merge into `main` through pull requests, with CI green.
+2. On GitHub: Releases > Draft a new release, new tag `vX.Y.Z` on target `main`, notes from the changelog at the end of this README, Publish.
+3. Watch Actions > Deploy. When it is green, `GET <RENDER_URL>/health` shows the new `version` and, in `model_info`, the W&B version, run, Git commit and data md5 of the served model.
+
+Check the live service by hand at any time (Render free services sleep after 15 minutes and wake on the first call):
+
+```bash
+python scripts/smoke_test.py --url <RENDER_URL>
+```
+
+**Roll back:** every release keeps its own image, so going back does not rebuild anything. Actions > Deploy > Run workflow, enter the older tag (for example `v1.0.0`), Run. The guard checks the tag is on `main`, Render deploys that image and the smoke test waits until `/health` reports it. To return to the latest release, run it again with the latest tag.
+
+| Date | From | To | Why | Result |
+| --- | --- | --- | --- | --- |
+| (rollback practice, filled after the first two releases) | | | | |
+
+Settings the repo owner adds once (Settings > Secrets and variables > Actions): secrets `WANDB_API_KEY`, `DAGSHUB_USER`, `DAGSHUB_TOKEN`, `RENDER_DEPLOY_HOOK` (Render > service > Settings > Deploy Hook) and variable `RENDER_URL` (`https://<service>.onrender.com`). The Render service is an image-backed web service that pulls `ghcr.io/<owner>/<repo>:<tag>`.
+
+## 8. Configuration
 
 [`config.yaml`](config.yaml) is the single source of every non-secret setting. `src/config.py` reads it once with `load_config` into `SETTINGS` and turns the relative paths into absolute paths under the repo root; `src/main.py` (and later the API) imports `SETTINGS` from there. To change a setting, edit `config.yaml` and rerun; no code changes are needed. Secrets never go here: they belong in `.env`, whose names are listed in `.env.example`.
 
@@ -214,7 +246,7 @@ With branch protection on `dev` and `main` (Settings > Branches: require these f
 
 **Release rule** (the same in section 1, `TEAM_BRIEF.md`, `config.yaml` and `check_quality_gate` in `src/main.py`): the model that predicts `cost_usd` is released only if `mape` on the validation split is at most 0.18 (18%). `mae` is reported on every run but does not block the release.
 
-## 8. Project structure
+## 9. Project structure
 
 ### The pipeline at a glance
 
@@ -254,7 +286,9 @@ With branch protection on `dev` and `main` (Settings > Branches: require these f
 ├── .github/
 │   ├── pull_request_template.md
 │   └── workflows/
-│       └── ci.yml            # CI: lint, test, pipeline with gate, Docker build on every pull request
+│       ├── ci.yml            # CI: lint, test, pipeline with gate, Docker build on every pull request
+│       ├── deploy.yml        # CD: a published release (or a rollback tag) goes live on Render
+│       └── release-guard.yml # stops a release whose tag is not on main
 ├── notebooks/                # the "lab": exploration only (MLOps_Cost_Prediction.ipynb)
 ├── src/                      # the "factory": one job per module, one logger per module
 │   ├── __init__.py           # makes src a package
@@ -278,10 +312,13 @@ With branch protection on `dev` and `main` (Settings > Branches: require these f
 ├── models/                   # model.joblib (generated, not in Git)
 ├── reports/                  # predictions.csv (generated, not in Git)
 ├── logs/                     # pipeline.log (generated, not in Git)
+├── scripts/
+│   ├── fetch_prod_model.py   # download the W&B prod model and its lineage (python -m scripts.fetch_prod_model)
+│   └── smoke_test.py         # check a running API: python scripts/smoke_test.py --url <url>
 └── tests/                    # test_<module>.py per module: unit and integration tests
 ```
 
-## 9. Team and module owners
+## 10. Team and module owners
 
 From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors the model; IT maintains the infrastructure and the TMS.
 

@@ -160,12 +160,13 @@ def _predict_new_shipments(settings: dict, model) -> pd.DataFrame:
 def _remove_previous_outputs(paths: dict) -> None:
     """Delete the model and predictions left by an earlier run, before anything is trained.
 
-    Inputs: SETTINGS["paths"] (uses "model" and "predictions").
+    Inputs: SETTINGS["paths"] (uses "model", "model_info" and "predictions").
     Outputs: None; the files are removed if they exist.
-    Why: if this run fails the gate, no older model or predictions stay on disk looking like its result;
+    Why: if this run fails the gate, no older model or predictions stay on disk looking like its result,
+    and no lineage of a downloaded prod model is shown for a model trained here;
     released models are kept in the model registry, not in models/.
     """
-    for name in ("model", "predictions"):
+    for name in ("model", "model_info", "predictions"):
         if paths[name].exists():
             logger.info("Removing %s from an earlier run: %s", name, paths[name])
             paths[name].unlink()

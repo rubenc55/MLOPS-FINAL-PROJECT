@@ -1,7 +1,9 @@
 """Tests for src/tracking.py: W&B runs, the prod model and lineage, without an account or internet."""
 
 import hashlib
+import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -177,3 +179,88 @@ def test_integration_real_wandb_disabled_mode(tmp_path, monkeypatch):
     tracking.end_run(run)
 
     assert not (tmp_path / "wandb").exists()
+
+
+class FakeLoggedRun:
+    """Stand-in for the W&B run that logged an artifact."""
+
+    path = ["team", "shipping-cost", "run123"]
+
+
+class FakeRegistryArtifact:
+    """Stand-in for a downloaded registry artifact that holds one file."""
+
+    qualified_name, version, aliases = "team/shipping-cost/shipping_cost_model:v3", "v3", ["latest", "prod"]
+    metadata = {"git_commit": "abc123", "data_md5": "4db8", "val_metrics": {"mape": 0.165}}
+
+    def __init__(self, file_name, run):
+        self.file_name, self.run = file_name, run
+
+    def download(self, root):
+        (Path(root) / self.file_name).write_bytes(b"prod model")
+        return root
+
+    def logged_by(self):
+        return self.run
+
+
+@pytest.fixture
+def fake_registry(monkeypatch):
+    """Replace wandb.Api so artifact(name) returns a fake artifact and records the requested name."""
+    requested = {}
+
+    def install(file_name="model.joblib", run=FakeLoggedRun()):
+        class FakeApi:
+            def artifact(self, name, type):  # pylint: disable=redefined-builtin
+                requested.update(name=name, type=type)
+                return FakeRegistryArtifact(file_name, run)
+
+        monkeypatch.setattr(tracking.wandb, "Api", FakeApi)
+        return requested
+
+    return install
+
+
+def test_unit_fetch_prod_model_replaces_model_and_writes_lineage(fake_registry, tmp_path, monkeypatch):
+    """The prod model replaces any older file, and its lineage (version, run, commit, data) is written next to it."""
+    monkeypatch.setenv("WANDB_API_KEY", "not-a-real-key")
+    requested = fake_registry()
+    model_path, info_path = tmp_path / "models" / "model.joblib", tmp_path / "models" / "model_info.json"
+    model_path.parent.mkdir()
+    model_path.write_bytes(b"older local model")
+
+    info = tracking.fetch_prod_model(TRACKING, model_path, info_path)
+
+    assert requested == {"name": "shipping-cost/shipping_cost_model:prod", "type": "model"}
+    assert model_path.read_bytes() == b"prod model"
+    assert info["version"] == "v3" and info["wandb_run"] == "team/shipping-cost/run123"
+    assert info["git_commit"] == "abc123" and info["data_md5"] == "4db8"
+    assert json.loads(info_path.read_text(encoding="utf-8")) == info
+
+
+def test_unit_fetch_prod_model_uses_entity_and_handles_unknown_run(fake_registry, tmp_path, monkeypatch):
+    """With an entity in config.yaml the name starts with it; an artifact without a logging run keeps wandb_run None."""
+    monkeypatch.setenv("WANDB_API_KEY", "not-a-real-key")
+    requested = fake_registry(run=None)
+
+    info = tracking.fetch_prod_model({**TRACKING, "entity": "team"}, tmp_path / "model.joblib", tmp_path / "info.json")
+
+    assert requested["name"] == "team/shipping-cost/shipping_cost_model:prod"
+    assert info["wandb_run"] is None
+
+
+def test_unit_fetch_prod_model_without_key_raises(monkeypatch, tmp_path):
+    """Without WANDB_API_KEY the deploy stops with a clear message instead of shipping an unknown model."""
+    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="WANDB_API_KEY is not set"):
+        tracking.fetch_prod_model(TRACKING, tmp_path / "model.joblib", tmp_path / "info.json")
+
+
+def test_unit_fetch_prod_model_wrong_file_raises(fake_registry, tmp_path, monkeypatch):
+    """An artifact without model.joblib stops the deploy and names the missing file."""
+    monkeypatch.setenv("WANDB_API_KEY", "not-a-real-key")
+    fake_registry(file_name="other.pkl")
+
+    with pytest.raises(FileNotFoundError, match="has no file model.joblib"):
+        tracking.fetch_prod_model(TRACKING, tmp_path / "model.joblib", tmp_path / "info.json")

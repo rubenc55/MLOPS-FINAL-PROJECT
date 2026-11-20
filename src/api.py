@@ -8,7 +8,9 @@ Why: no ML logic here; it calls the same clean_dataframe, validate_dataframe and
 the batch pipeline, so a live estimate always equals the batch estimate for the same shipment.
 """
 
+import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import pandas as pd
@@ -23,6 +25,9 @@ from src.utils import load_model
 from src.validate import validate_dataframe
 
 logger = logging.getLogger(__name__)
+
+# Release tag baked into the image by deploy.yml (docker build --build-arg APP_VERSION=v1.0.0); "dev" elsewhere
+APP_VERSION = os.environ.get("APP_VERSION", "dev")
 
 SAMPLE_SHIPMENT = {
     "shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
@@ -74,10 +79,13 @@ class PredictionResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(api: FastAPI):
-    """Load the released model once at start-up; a missing model stops the service with a clear error."""
+    """Load the released model and its lineage once at start-up; a missing model stops the service."""
     setup_logging(SETTINGS["paths"]["log_file"], **SETTINGS["logging"])
     api.state.model = load_model(SETTINGS["paths"]["model"])
-    logger.info("API ready with model %s", SETTINGS["paths"]["model"])
+    info_path = SETTINGS["paths"]["model_info"]
+    api.state.model_info = json.loads(info_path.read_text(encoding="utf-8")) if info_path.is_file() else {}
+    logger.info("API %s ready with model %s %s", APP_VERSION, SETTINGS["paths"]["model"],
+                api.state.model_info.get("version", "(no lineage file)"))
     yield
 
 
@@ -90,13 +98,18 @@ app = FastAPI(
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    """Report that the service is up and which model file it serves.
+def health() -> dict:
+    """Report that the service is up, which release it runs and where its model comes from.
 
-    Inputs: none. Outputs: {"status": "ok", "model": file name}.
-    Why: Render and the smoke test check this before sending real requests.
+    Inputs: none. Outputs: {"status": "ok", "version": release tag, "model": file name,
+    "model_info": W&B version, run, git commit, data md5 and metrics of the prod model ({} if unknown)}.
+    Why: Render and the smoke test check this first; it also traces every live prediction to its
+    release, W&B run, data version and commit.
     """
-    return {"status": "ok", "model": SETTINGS["paths"]["model"].name}
+    return {
+        "status": "ok", "version": APP_VERSION, "model": SETTINGS["paths"]["model"].name,
+        "model_info": app.state.model_info,
+    }
 
 
 @app.post("/predict")
