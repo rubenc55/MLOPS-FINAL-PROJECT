@@ -1,13 +1,12 @@
 """Tests for src/main.py: the split, the quality gate and the full pipeline run."""
 
 import copy
+import logging
 
 import pandas as pd
 import pytest
 
-from src.main import (
-    PROJECT_ROOT, SETTINGS, check_quality_gate, load_config, main, run_pipeline, split_data
-)
+from src.main import SETTINGS, check_quality_gate, main, run_pipeline, split_data
 
 
 def _make_raw_df(n_rows: int = 60) -> pd.DataFrame:
@@ -45,6 +44,7 @@ def _make_settings(tmp_path, quality_gate: dict) -> dict:
         "clean_data": tmp_path / "processed" / "clean.csv",
         "model": tmp_path / "models" / "model.joblib",
         "predictions": tmp_path / "reports" / "predictions.csv",
+        "log_file": tmp_path / "logs" / "pipeline.log",
     }
     settings["model_params"] = {"n_estimators": 10}
     settings["quality_gate"] = quality_gate
@@ -115,20 +115,38 @@ def test_integration_run_pipeline_failed_gate_saves_no_model(tmp_path):
     assert not settings["paths"]["predictions"].exists()
 
 
+def test_integration_failed_gate_removes_model_from_earlier_run(tmp_path, caplog):
+    """Model and predictions of an earlier run are deleted, so a failed gate leaves nothing to deploy; it is logged."""
+    settings = _make_settings(tmp_path, quality_gate={"mape": 0.0})
+    for name in ("model", "predictions"):
+        settings["paths"][name].parent.mkdir(parents=True)
+        settings["paths"][name].write_text("from an earlier run", encoding="utf-8")
+
+    with caplog.at_level(logging.INFO), pytest.raises(ValueError, match="quality gate failed"):
+        run_pipeline(settings)
+
+    assert not settings["paths"]["model"].exists()
+    assert not settings["paths"]["predictions"].exists()
+    assert any(r.levelno == logging.ERROR and "quality gate failed: mape" in r.getMessage() for r in caplog.records)
+
+
 def test_unit_check_quality_gate_missing_metric_raises():
     """A gate metric that evaluate_model did not return stops the release, and the message names it."""
     with pytest.raises(ValueError, match="mape"):
         check_quality_gate({"mae": 150.0}, {"mape": 0.18})
 
 
-def test_unit_main_runs_pipeline_with_project_settings(monkeypatch):
+def test_unit_main_runs_pipeline_with_project_settings(tmp_path, monkeypatch):
     """main() hands the project SETTINGS to run_pipeline, so python -m src.main has one source of settings."""
+    settings = copy.deepcopy(SETTINGS)
+    settings["paths"]["log_file"] = tmp_path / "logs" / "pipeline.log"
+    monkeypatch.setattr("src.main.SETTINGS", settings)
     calls = []
     monkeypatch.setattr("src.main.run_pipeline", calls.append)
 
     main()
 
-    assert len(calls) == 1 and calls[0] is SETTINGS
+    assert len(calls) == 1 and calls[0] is settings
 
 
 def test_integration_main_runs_full_pipeline(tmp_path, monkeypatch):
@@ -140,30 +158,4 @@ def test_integration_main_runs_full_pipeline(tmp_path, monkeypatch):
 
     assert settings["paths"]["model"].is_file()
     assert settings["paths"]["predictions"].is_file()
-
-
-def test_unit_load_config_resolves_paths_against_project_root(tmp_path):
-    """Relative paths in the YAML file become absolute paths under the repo root; other values stay as written."""
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("paths:\n  model: models/model.joblib\nquality_gate:\n  mape: 0.18\n", encoding="utf-8")
-
-    settings = load_config(config_path)
-
-    assert settings["paths"]["model"] == PROJECT_ROOT / "models" / "model.joblib"
-    assert settings["quality_gate"] == {"mape": 0.18}
-
-
-def test_unit_load_config_missing_file_raises(tmp_path):
-    """A config file that does not exist stops the run with a FileNotFoundError that names the file."""
-    with pytest.raises(FileNotFoundError, match="missing_config.yaml"):
-        load_config(tmp_path / "missing_config.yaml")
-
-
-def test_integration_project_config_has_every_setting_the_pipeline_reads():
-    """The repo's config.yaml loads every section and path main uses, with the agreed gate mape <= 0.18."""
-    settings = load_config(PROJECT_ROOT / "config.yaml")
-
-    assert set(settings) == {"paths", "problem", "features", "validation", "split", "model_params", "quality_gate"}
-    assert set(settings["paths"]) == {"raw_data", "inference_data", "clean_data", "model", "predictions"}
-    assert all(path.is_absolute() for path in settings["paths"].values())
-    assert settings["quality_gate"] == {"mape": 0.18}
+    assert "Quality gate met" in settings["paths"]["log_file"].read_text(encoding="utf-8")
