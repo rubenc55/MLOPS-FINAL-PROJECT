@@ -69,43 +69,71 @@ conda env create -f environment.yml
 conda activate shipping-cost
 ```
 
-This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, pytest, pytest-cov and flake8. If you created the environment before `pyyaml` was added, update it with `conda env update -f environment.yml --prune`. Run every command below from the repo root with the environment active.
+This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, wandb, python-dotenv, pytest, pytest-cov, flake8 and dvc. If you created the environment before `wandb` was added, update it with `conda env update -f environment.yml --prune`. Run every command below from the repo root with the environment active.
+
+Secrets go in a `.env` file at the repo root, which Git ignores. Copy the names from `.env.example` and fill in your own values:
+
+```bash
+cp .env.example .env      # then set WANDB_API_KEY (wandb.ai > User settings > API keys)
+```
+
+Without `WANDB_API_KEY` the pipeline still runs; it only skips W&B tracking (section 4).
 
 ## 3. Data
 
-Nothing under `data/` or `models/` is committed, not even the folders (see `.gitignore`), so a fresh clone has no `data/` folder. Before the first run, create the two input folders from the repo root:
+The CSV files are never committed. Git keeps only small DVC pointers (`data/raw/shipments.csv.dvc` and `data/inference/new_shipments.csv.dvc`) with the hash of each file; the files themselves live in the project's DagsHub storage ([jyothikasurya2002/MLOPS-FINAL-PROJECT](https://dagshub.com/jyothikasurya2002/MLOPS-FINAL-PROJECT), public). DagsHub asks for a login even on public repos, so before the first `dvc pull` save your DagsHub user and token (DagsHub > Your Settings > Tokens) on your machine only:
 
 ```bash
-mkdir -p data/raw data/inference      # macOS, Linux or Git Bash
-mkdir data/raw, data/inference        # Windows PowerShell
+dvc remote modify origin --local auth basic
+dvc remote modify origin --local user <dagshub-user>
+dvc remote modify origin --local password <dagshub-token>
+dvc pull
 ```
 
-Then put the input files in them:
+`--local` writes to `.dvc/config.local`, which Git ignores, so the token is never committed.
 
 | File | Contents | Where it comes from |
 | --- | --- | --- |
 | `data/raw/shipments.csv` | Training data, one row per shipment: `shipment_id`, `transport_mode`, `cargo_type`, `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month`, `cost_usd` | Sheet `data` of `shipments.xlsx` (section 1), exported once as CSV (UTF-8) |
-| `data/inference/new_shipments.csv` | New shipments to price: the same columns without `cost_usd` | The shipments that need a cost estimate |
+| `data/inference/new_shipments.csv` | New shipments to price: the same columns without `cost_usd` | Stand-in until the TMS export exists: the first 20 shipments of sheet `data`, without `cost_usd` |
 
-The output folders (`data/processed/`, `models/` and `reports/`) are created by the run itself. To read the inputs from another location, change `paths.raw_data` and `paths.inference_data` in `config.yaml`.
+The output folders (`data/processed/`, `models/`, `reports/` and `logs/`) are created by the run itself. To read the inputs from another location, change `paths.raw_data` and `paths.inference_data` in `config.yaml` and in `dvc.yaml`.
+
+To replace a data file, overwrite it, then run `dvc add <file>` and `dvc push`, and commit the updated `.dvc` pointer. `dvc push` needs write access to the DagsHub repo (ask the owner to add you as a collaborator).
 
 ## 4. Run the pipeline
 
 ```bash
-python -m src.main
+dvc repro
 ```
 
-The run loads and cleans the raw shipments, validates them against the rules in `config.yaml`, splits them 70/15/15 into train, validation and test, fits the feature recipe and the model on train only, applies the quality gate on validation, reports the test metrics, and then prices the new shipments with the same cleaning and rules. Progress is logged to the terminal, and the run ends with `Done. Model: ... | Predictions: ...`.
+`dvc repro` runs the only stage in `dvc.yaml`, `python -m src.main`, and records the hash of the code, data, settings and every output in `dvc.lock`. If nothing changed since the last run, it skips the run. Commit `dvc.lock` after every run that changes it, and send the new model to DagsHub with `dvc push`. `python -m src.main` alone runs the same pipeline without updating `dvc.lock`.
 
-It writes three files, none of them committed:
+The run loads and cleans the raw shipments, validates them against the rules in `config.yaml`, splits them 70/15/15 into train, validation and test, fits the feature recipe and the model on train only, applies the quality gate on validation, reports the test metrics, and then prices the new shipments with the same cleaning and rules. Progress is logged to the terminal and appended to `logs/pipeline.log`, and the run ends with `Done. Model: ... | Predictions: ...`.
+
+It writes four files, none of them committed:
 
 | Output | Default path (`config.yaml` key) | Written when |
 | --- | --- | --- |
 | Clean training table | `data/processed/clean.csv` (`paths.clean_data`) | On every run, after cleaning and validation |
 | Trained model (one Pipeline: `preprocess` + `model`) | `models/model.joblib` (`paths.model`) | Only if `mape` on validation is at most 0.18 |
 | Predictions: `shipment_id` and `prediction` (cost in USD) per new shipment | `reports/predictions.csv` (`paths.predictions`) | After the model is released |
+| Run log: every step, the validation and test metrics and the gate decision | `logs/pipeline.log` (`paths.log_file`) | On every run, appended (also when the gate or validation fails); `dvc repro` starts it fresh |
 
-If the gate fails, the run stops with `Model not released, quality gate failed: ...` and writes no model and no predictions. If the data breaks a rule, it stops with `Data validation failed:` followed by every problem found.
+Every run first deletes the model and predictions of the previous run. If the gate fails, the run stops with `Model not released, quality gate failed: ...` (also written to `logs/pipeline.log` as an ERROR), so `models/` and `reports/` stay empty and no model rejected by the gate, or older than it, can be deployed. If the data breaks a rule, it stops with `Data validation failed:` followed by every problem found.
+
+### Tracking and model registry
+
+`src/main.py` owns one W&B run per pipeline run (project `shipping-cost`, `tracking` in `config.yaml`). Each run records:
+
+| What | Where in W&B |
+| --- | --- |
+| Every setting of `config.yaml`, the md5 of `data/raw/shipments.csv` (the same hash as in `shipments.csv.dvc`) and the Git commit | Run config: `data_md5`, `git_commit` |
+| `val_mae`, `val_mape`, and after the gate `test_mae`, `test_mape` | Run metrics |
+| Why a run stopped (failed gate or bad data) | Run state failed, summary `error` |
+| The model, only if the gate passes and the predictions are written | Artifact `shipping_cost_model`, new version with aliases `latest` and `prod`, metadata with the hash, commit and metrics |
+
+So `prod` always points to the last model that met the gate, and any prod model leads back to its run, data version and commit. Without `WANDB_API_KEY` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing.
 
 ## 5. Test and check style
 
@@ -119,17 +147,19 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 
 ## 6. Configuration
 
-[`config.yaml`](config.yaml) is the single source of every non-secret setting. `src/main.py` reads it once with `load_config` into `SETTINGS` and turns the relative paths into absolute paths under the repo root. To change a setting, edit `config.yaml` and rerun; no code changes are needed. Secrets never go here: they belong in `.env`, whose names are listed in `.env.example`.
+[`config.yaml`](config.yaml) is the single source of every non-secret setting. `src/config.py` reads it once with `load_config` into `SETTINGS` and turns the relative paths into absolute paths under the repo root; `src/main.py` (and later the API) imports `SETTINGS` from there. To change a setting, edit `config.yaml` and rerun; no code changes are needed. Secrets never go here: they belong in `.env`, whose names are listed in `.env.example`.
 
 | Section | What it sets | Current values |
 | --- | --- | --- |
 | `paths` | Input and output files, relative to the repo root | See sections 3 and 4 |
+| `logging` | Log level and line format for the console and `paths.log_file` | `INFO`, `time \| level \| module \| message` |
 | `problem` | Target, problem type and ID column | `cost_usd`, `regression`, `shipment_id` |
 | `features` | Categorical (one-hot encoded) and numeric (passed through) columns | `transport_mode`, `cargo_type` / `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month` |
 | `validation` | Allowed categories and numeric ranges, limits included | For example `transport_mode`: Road, Sea, Air; `month`: 1 to 12 |
 | `split` | Test and validation shares of the whole dataset, seed, stratification | 0.15, 0.15, 42, off |
 | `model_params` | `RandomForestRegressor` settings | `n_estimators` 200, `max_depth` none, `max_features` 0.5, `min_samples_leaf` 5 |
 | `quality_gate` | Release limit per metric (lower is better) | `mape: 0.18` |
+| `tracking` | W&B mode, project, entity, model artifact name and the alias of the released model | `online`, `shipping-cost`, default entity, `shipping_cost_model`, `prod` |
 
 **Release rule** (the same in section 1, `TEAM_BRIEF.md`, `config.yaml` and `check_quality_gate` in `src/main.py`): the model that predicts `cost_usd` is released only if `mape` on the validation split is at most 0.18 (18%). `mae` is reported on every run but does not block the release.
 
@@ -159,6 +189,9 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 ├── TEAM_BRIEF.md             # team decisions and module owners
 ├── config.yaml               # every non-secret setting (paths, columns, rules, split, model, gate)
 ├── environment.yml           # conda environment: Python 3.12 and packages
+├── dvc.yaml                  # DVC stage: python -m src.main, its inputs and outputs
+├── dvc.lock                  # hashes of the last run (generated by dvc repro, committed)
+├── .dvc/                     # DVC settings: config (DagsHub remote) is committed, config.local is not
 ├── .env.example              # names of secrets, never real values
 ├── .gitignore                # keeps data, secrets, logs and generated files out of Git
 ├── .flake8                   # style checker settings
@@ -177,13 +210,17 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 │   ├── evaluate.py           # 6. metrics on unseen data
 │   ├── infer.py              # 7. predictions on new data
 │   ├── utils.py              # shared read and write helpers
-│   └── main.py               # 0. orchestrator: load_config, then python -m src.main
+│   ├── config.py             # load_config: config.yaml -> SETTINGS
+│   ├── logger.py             # setup_logging: console + logs/pipeline.log
+│   ├── tracking.py           # W&B run, metrics and prod model (called by main)
+│   └── main.py               # 0. orchestrator: python -m src.main
 ├── data/
-│   ├── raw/                  # shipments.csv (added by you, not in Git)
-│   ├── inference/            # new_shipments.csv (added by you, not in Git)
+│   ├── raw/                  # shipments.csv.dvc in Git; shipments.csv from dvc pull
+│   ├── inference/            # new_shipments.csv.dvc in Git; new_shipments.csv from dvc pull
 │   └── processed/            # clean.csv (generated, not in Git)
 ├── models/                   # model.joblib (generated, not in Git)
 ├── reports/                  # predictions.csv (generated, not in Git)
+├── logs/                     # pipeline.log (generated, not in Git)
 └── tests/                    # test_<module>.py per module: unit and integration tests
 ```
 

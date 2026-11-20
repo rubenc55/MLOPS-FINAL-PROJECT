@@ -34,6 +34,9 @@ data/**
 !data/processed/
 !data/inference/
 !data/**/.gitkeep
+# DVC pointers are committed; the CSV they point to lives on DagsHub (dvc pull)
+!data/raw/*.dvc
+!data/inference/*.dvc
 
 # Generated outputs (recreated by: python -m src.main)
 models/**
@@ -47,3 +50,6 @@ data/processed/*.csv
 models/*.joblib
 reports/*.csv
 logs/
+
+# Local files written by W&B on every run (the run itself lives in W&B)
+wandb/
