@@ -13,11 +13,13 @@ stages:
       size: 243653
     - path: src
       hash: md5
-      md5: 8bc15bd0456d4b7b991416ee875a5e0c.dir
-      size: 46492
+      md5: 2013a4477645967bac9f0e52a0236616.dir
+      size: 48537
       nfiles: 14
     params:
       config.yaml:
+        baseline:
+          group_column: transport_mode
         features:
           categorical:
           - transport_mode

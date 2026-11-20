@@ -5,7 +5,7 @@ import pytest
 from sklearn.dummy import DummyRegressor
 from sklearn.pipeline import Pipeline
 
-from src.evaluate import evaluate_model
+from src.evaluate import evaluate_baseline, evaluate_model
 
 
 def _make_model_and_data() -> tuple[Pipeline, pd.DataFrame, pd.Series]:
@@ -72,3 +72,35 @@ def test_integration_evaluate_scores_output_of_train_model():
     assert set(metrics) == {"mae", "mape"}
     assert metrics["mae"] >= 0.0
     assert 0.0 <= metrics["mape"] < 1.0
+
+
+def test_unit_evaluate_baseline_uses_train_median_per_group():
+    """Each eval row gets the median train cost of its group: Road 100 and Sea 300, so the errors are known."""
+    x_train = pd.DataFrame({"transport_mode": ["Road", "Road", "Road", "Sea", "Sea"]})
+    y_train = pd.Series([90.0, 100.0, 500.0, 200.0, 400.0])
+    x_eval = pd.DataFrame({"transport_mode": ["Road", "Sea"]})
+    y_eval = pd.Series([200.0, 300.0])
+
+    metrics = evaluate_baseline(x_train, y_train, x_eval, y_eval, "transport_mode")
+
+    assert metrics == pytest.approx({"mae": 50.0, "mape": 0.25})  # errors 100 and 0; 100/200 and 0/300
+
+
+def test_unit_evaluate_baseline_unseen_group_uses_overall_median():
+    """A group that never appears in train (here Air) gets the overall train median instead of no estimate."""
+    x_train = pd.DataFrame({"transport_mode": ["Road", "Sea", "Sea"]})
+    y_train = pd.Series([100.0, 200.0, 400.0])
+
+    metrics = evaluate_baseline(
+        x_train, y_train, pd.DataFrame({"transport_mode": ["Air"]}), pd.Series([200.0]), "transport_mode"
+    )
+
+    assert metrics == pytest.approx({"mae": 0.0, "mape": 0.0})
+
+
+def test_unit_evaluate_baseline_missing_group_column_raises():
+    """A baseline column that is not a feature stops the run with a message naming the setting."""
+    x = pd.DataFrame({"distance_km": [100.0]})
+
+    with pytest.raises(ValueError, match="Baseline column 'transport_mode'"):
+        evaluate_baseline(x, pd.Series([1.0]), x, pd.Series([1.0]), "transport_mode")
