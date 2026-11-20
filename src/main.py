@@ -1,55 +1,31 @@
 """Run the whole shipping cost pipeline with one command: python -m src.main
 
-Inputs: config.yaml at the repo root (paths, columns, rules, split, model parameters,
-quality gate), read once into SETTINGS by load_config.
-Outputs: the clean training table, the model (only if the quality gate passes) and the
-predictions, written to the paths set in config.yaml.
+Inputs: SETTINGS from src/config.py (config.yaml: paths, columns, rules, split, model parameters,
+quality gate, logging).
+Outputs: the clean training table, the model (only if the quality gate passes), the
+predictions and the run log (logs/pipeline.log), written to the paths set in config.yaml.
 Used by: the team, CI and the stage 3 API;
 it is the only place where the modules are wired together.
 Why: one entry point and one source of settings, so every run follows the same steps.
 """
 
 import logging
-from pathlib import Path
 
 import pandas as pd
-import yaml
 from sklearn.model_selection import train_test_split
 
 from src.clean_data import clean_dataframe
+from src.config import SETTINGS
 from src.evaluate import evaluate_model
 from src.features import get_feature_preprocessor
 from src.infer import run_inference
 from src.load_data import load_raw_data
+from src.logger import setup_logging
 from src.train import train_model
 from src.utils import save_csv, save_model
 from src.validate import validate_dataframe
 
 logger = logging.getLogger(__name__)
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def load_config(config_path: Path) -> dict:
-    """Read the YAML settings file and turn its relative paths into absolute ones.
-
-    Inputs: config_path, the YAML file (config.yaml at the repo root).
-    Outputs: the settings dict with the same sections as the file; every entry of "paths" becomes
-    an absolute Path under PROJECT_ROOT.
-    Why: one source of settings for every run; paths relative to the repo root work from any folder.
-    """
-    config_path = Path(config_path)
-    if not config_path.is_file():
-        raise FileNotFoundError(
-            f"Config file not found: {config_path}. Create config.yaml at the repo root."
-        )
-    with config_path.open(encoding="utf-8") as config_file:
-        settings = yaml.safe_load(config_file)
-    settings["paths"] = {name: PROJECT_ROOT / path for name, path in settings["paths"].items()}
-    return settings
-
-
-SETTINGS = load_config(PROJECT_ROOT / "config.yaml")
 
 
 # Six arguments is the course contract for split_data, so its signature must not change.
@@ -192,11 +168,11 @@ def run_pipeline(settings: dict) -> dict[str, float]:
 def main() -> None:
     """Entry point for python -m src.main: run the pipeline with the project SETTINGS.
 
-    Inputs: none (uses SETTINGS). Outputs: model and predictions files on disk.
+    Inputs: none (uses SETTINGS). Outputs: model, predictions and log files on disk.
     Why: one command for the team, CI and later the stage 3 API.
     """
     # Only the entry point configures logging; every module just writes to its own logger
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging(SETTINGS["paths"]["log_file"], **SETTINGS["logging"])
     logger.info("Running the pipeline with the project SETTINGS")
     run_pipeline(SETTINGS)
 
