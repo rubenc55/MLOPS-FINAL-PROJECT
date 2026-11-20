@@ -17,6 +17,7 @@ venv/
 
 # Tooling
 .pytest_cache/
+.pytest-tmp/
 .mypy_cache/
 .coverage
 htmlcov/
@@ -27,13 +28,13 @@ htmlcov/
 .vscode/*
 !.vscode/settings.json
 
-# Data: never in Git by default (it may hold personal or confidential information)
-data/**
-!data/
-!data/raw/
-!data/processed/
-!data/inference/
-!data/**/.gitkeep
+# Data: never in Git by default (it may hold personal or confidential information).
+# Only the DVC pointers (*.dvc) are committed; the files they point to live on DagsHub (dvc pull).
+# Written as files-then-exceptions, not data/**, because DVC reads .gitignore too and skips
+# pointers hidden by data/**, so dvc pull would not download the input data
+data/**/*
+!data/**/
+!data/**/*.dvc
 
 # Generated outputs (recreated by: python -m src.main)
 models/**
@@ -47,3 +48,6 @@ data/processed/*.csv
 models/*.joblib
 reports/*.csv
 logs/
+
+# Local files written by W&B on every run (the run itself lives in W&B)
+wandb/

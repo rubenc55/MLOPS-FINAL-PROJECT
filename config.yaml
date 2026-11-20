@@ -1,7 +1,7 @@
 # config.yaml  [Settings: single source of truth]
 # -------------------------------------------------------------------
 # Purpose   Every NON-SECRET setting the pipeline needs, in one place
-# Read by   src/main.py: SETTINGS = load_config(PROJECT_ROOT / "config.yaml"); later also api.py
+# Read by   src/config.py: SETTINGS = load_config(CONFIG_PATH), used by main.py and later api.py
 # Why       Change the target, features, rules, split or model without touching code
 # Never     Secrets (API keys, passwords). Those go in .env
 # Paths     Relative to the repo root; load_config turns them into absolute paths
@@ -12,7 +12,15 @@ paths:
   inference_data: data/inference/new_shipments.csv
   clean_data: data/processed/clean.csv    # written in training, after clean and validate
   model: models/model.joblib              # written only if the quality gate passes
+  model_info: models/model_info.json     # lineage of the prod model (deploy: scripts/fetch_prod_model.py)
   predictions: reports/predictions.csv
+  log_file: logs/pipeline.log             # audit trail of every run, appended (not committed)
+
+# Where log messages go: the console and paths.log_file, set up once by main with setup_logging.
+# Keys match setup_logging's parameters, so main passes them with **settings["logging"]
+logging:
+  level: INFO
+  log_format: "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 problem:
   target_column: cost_usd
@@ -55,3 +63,17 @@ model_params:
 # mae is reported on every run but not gated (README)
 quality_gate:
   mape: 0.18
+
+# No-ML baseline for the business case (README section 1): median train cost per group, scored on
+# validation in every run and reported next to the model; it does not block the release
+baseline:
+  group_column: transport_mode
+
+# Experiment tracking and model registry in W&B (Weights & Biases, now CoreWeave Forge), driven by main.py.
+# The API key is a secret: WANDB_API_KEY in .env (see .env.example), never here
+tracking:
+  mode: online                    # online | offline | disabled; online without WANDB_API_KEY runs as disabled
+  project: shipping-cost
+  entity: null                    # W&B user or team; null uses the default of the API key
+  model_name: shipping_cost_model # model artifact name; one version per model that passes the gate
+  prod_alias: prod                # moved to every model that passes the gate; the API and deploy load this one
