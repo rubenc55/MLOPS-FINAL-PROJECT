@@ -95,15 +95,16 @@ The output folders (`data/processed/`, `models/` and `reports/`) are created by 
 python -m src.main
 ```
 
-The run loads and cleans the raw shipments, validates them against the rules in `config.yaml`, splits them 70/15/15 into train, validation and test, fits the feature recipe and the model on train only, applies the quality gate on validation, reports the test metrics, and then prices the new shipments with the same cleaning and rules. Progress is logged to the terminal, and the run ends with `Done. Model: ... | Predictions: ...`.
+The run loads and cleans the raw shipments, validates them against the rules in `config.yaml`, splits them 70/15/15 into train, validation and test, fits the feature recipe and the model on train only, applies the quality gate on validation, reports the test metrics, and then prices the new shipments with the same cleaning and rules. Progress is logged to the terminal and appended to `logs/pipeline.log`, and the run ends with `Done. Model: ... | Predictions: ...`.
 
-It writes three files, none of them committed:
+It writes four files, none of them committed:
 
 | Output | Default path (`config.yaml` key) | Written when |
 | --- | --- | --- |
 | Clean training table | `data/processed/clean.csv` (`paths.clean_data`) | On every run, after cleaning and validation |
 | Trained model (one Pipeline: `preprocess` + `model`) | `models/model.joblib` (`paths.model`) | Only if `mape` on validation is at most 0.18 |
 | Predictions: `shipment_id` and `prediction` (cost in USD) per new shipment | `reports/predictions.csv` (`paths.predictions`) | After the model is released |
+| Run log: every step, the validation and test metrics and the gate decision | `logs/pipeline.log` (`paths.log_file`) | On every run, appended (also when the gate or validation fails) |
 
 If the gate fails, the run stops with `Model not released, quality gate failed: ...` and writes no model and no predictions. If the data breaks a rule, it stops with `Data validation failed:` followed by every problem found.
 
@@ -119,11 +120,12 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 
 ## 6. Configuration
 
-[`config.yaml`](config.yaml) is the single source of every non-secret setting. `src/main.py` reads it once with `load_config` into `SETTINGS` and turns the relative paths into absolute paths under the repo root. To change a setting, edit `config.yaml` and rerun; no code changes are needed. Secrets never go here: they belong in `.env`, whose names are listed in `.env.example`.
+[`config.yaml`](config.yaml) is the single source of every non-secret setting. `src/config.py` reads it once with `load_config` into `SETTINGS` and turns the relative paths into absolute paths under the repo root; `src/main.py` (and later the API) imports `SETTINGS` from there. To change a setting, edit `config.yaml` and rerun; no code changes are needed. Secrets never go here: they belong in `.env`, whose names are listed in `.env.example`.
 
 | Section | What it sets | Current values |
 | --- | --- | --- |
 | `paths` | Input and output files, relative to the repo root | See sections 3 and 4 |
+| `logging` | Log level and line format for the console and `paths.log_file` | `INFO`, `time \| level \| module \| message` |
 | `problem` | Target, problem type and ID column | `cost_usd`, `regression`, `shipment_id` |
 | `features` | Categorical (one-hot encoded) and numeric (passed through) columns | `transport_mode`, `cargo_type` / `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month` |
 | `validation` | Allowed categories and numeric ranges, limits included | For example `transport_mode`: Road, Sea, Air; `month`: 1 to 12 |
@@ -177,13 +179,16 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 │   ├── evaluate.py           # 6. metrics on unseen data
 │   ├── infer.py              # 7. predictions on new data
 │   ├── utils.py              # shared read and write helpers
-│   └── main.py               # 0. orchestrator: load_config, then python -m src.main
+│   ├── config.py             # load_config: config.yaml -> SETTINGS
+│   ├── logger.py             # setup_logging: console + logs/pipeline.log
+│   └── main.py               # 0. orchestrator: python -m src.main
 ├── data/
 │   ├── raw/                  # shipments.csv (added by you, not in Git)
 │   ├── inference/            # new_shipments.csv (added by you, not in Git)
 │   └── processed/            # clean.csv (generated, not in Git)
 ├── models/                   # model.joblib (generated, not in Git)
 ├── reports/                  # predictions.csv (generated, not in Git)
+├── logs/                     # pipeline.log (generated, not in Git)
 └── tests/                    # test_<module>.py per module: unit and integration tests
 ```
 
