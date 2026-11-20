@@ -1,0 +1,105 @@
+schema: '2.0'
+stages:
+  pipeline:
+    cmd: python -m src.main
+    deps:
+    - path: data/inference/new_shipments.csv
+      hash: md5
+      md5: 27ead833a94ca37a8802ce6dc3911cc7
+      size: 871
+    - path: data/raw/shipments.csv
+      hash: md5
+      md5: 4db88fc35cedc15342d7dbb78b8af09d
+      size: 243653
+    - path: src
+      hash: md5
+      md5: 1091a330693d124306c7433a245268d3.dir
+      size: 43802
+      nfiles: 14
+    params:
+      config.yaml:
+        features:
+          categorical:
+          - transport_mode
+          - cargo_type
+          numeric:
+          - distance_km
+          - weight_kg
+          - volume_m3
+          - urgent
+          - month
+        logging:
+          level: INFO
+          log_format: '%(asctime)s | %(levelname)s | %(name)s | %(message)s'
+        model_params:
+          n_estimators: 200
+          max_depth:
+          max_features: 0.5
+          min_samples_leaf: 5
+        paths:
+          raw_data: data/raw/shipments.csv
+          inference_data: data/inference/new_shipments.csv
+          clean_data: data/processed/clean.csv
+          model: models/model.joblib
+          predictions: reports/predictions.csv
+          log_file: logs/pipeline.log
+        problem:
+          target_column: cost_usd
+          problem_type: regression
+          id_column: shipment_id
+        quality_gate:
+          mape: 0.18
+        split:
+          test_size: 0.15
+          val_size: 0.15
+          random_state: 42
+          stratify: false
+        tracking:
+          mode: online
+          project: shipping-cost
+          entity:
+          model_name: shipping_cost_model
+          prod_alias: prod
+        validation:
+          allowed_values:
+            transport_mode:
+            - Road
+            - Sea
+            - Air
+            cargo_type:
+            - General
+            - Refrigerated
+            - Hazardous
+            urgent:
+            - 0
+            - 1
+          numeric_ranges:
+            distance_km:
+            - 50
+            - 12000
+            weight_kg:
+            - 10
+            - 9900
+            volume_m3:
+            - 0.028
+            - 93.213
+            month:
+            - 1
+            - 12
+    outs:
+    - path: data/processed/clean.csv
+      hash: md5
+      md5: 4db88fc35cedc15342d7dbb78b8af09d
+      size: 243653
+    - path: logs/pipeline.log
+      hash: md5
+      md5: 465dd0f9dd52c725f5daf96c4ed28b71
+      size: 3260
+    - path: models/model.joblib
+      hash: md5
+      md5: e2286c980eacabe8c7c12c0190e2041e
+      size: 10034842
+    - path: reports/predictions.csv
+      hash: md5
+      md5: 72873832f88dfc8ec50bfad4843bab0f
+      size: 442

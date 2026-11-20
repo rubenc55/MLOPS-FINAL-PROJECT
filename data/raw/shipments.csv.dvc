@@ -1,0 +1,5 @@
+outs:
+- md5: 4db88fc35cedc15342d7dbb78b8af09d
+  size: 243653
+  hash: md5
+  path: shipments.csv
