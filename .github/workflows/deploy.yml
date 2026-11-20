@@ -1,0 +1,94 @@
+# deploy.yml  [Continuous deployment: a published release goes live on Render]
+# -------------------------------------------------------------------
+# Release   publish a GitHub Release from main (tag vX.Y.Z): guard -> CI on the tag -> image with the
+#           W&B prod model -> smoke test of the image -> push to ghcr.io -> Render deploys that tag ->
+#           smoke test of the live URL until /health reports the new tag
+# Rollback  Actions > Deploy > Run workflow, tag of an older release: guard -> Render deploys the image
+#           already built for that tag (it passed CI when it was released) -> live smoke test
+# Secrets   WANDB_API_KEY, DAGSHUB_USER, DAGSHUB_TOKEN (CI), RENDER_DEPLOY_HOOK; variable RENDER_URL
+# Image     ghcr.io/<owner>/<repo>:<tag>, one per release, so any release can be redeployed
+
+name: Deploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to roll back to (its image must exist), e.g. v1.0.0
+        required: true
+        type: string
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false   # never stop a deploy halfway
+
+permissions:
+  contents: read
+  packages: write   # push the release image to ghcr.io
+
+env:
+  TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  guard:
+    uses: ./.github/workflows/release-guard.yml
+    with:
+      tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+
+  ci:
+    if: github.event_name == 'release'
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  build:
+    name: build release image (prod model)
+    if: github.event_name == 'release'
+    needs: ci
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: conda-lock.yml
+          environment-name: shipping-cost
+          cache-environment: true
+      - name: Download the W&B prod model and its lineage
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+        run: python -m scripts.fetch_prod_model
+      - name: docker build, tagged with the release
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:$TAG" >> "$GITHUB_ENV"
+          docker build --build-arg APP_VERSION="$TAG" -t "ghcr.io/${GITHUB_REPOSITORY,,}:$TAG" .
+      - name: Smoke test the image before it is pushed
+        run: |
+          docker run -d --name api -p 8000:8000 "$IMAGE"
+          python scripts/smoke_test.py --url http://localhost:8000 --expect-version "$TAG"
+      - name: Push the image to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE"
+
+  deploy:
+    name: deploy to Render and smoke test
+    needs: [guard, build]
+    if: ${{ !cancelled() && needs.guard.result == 'success' && (needs.build.result == 'success' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Ask Render to deploy the image of this tag
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:$TAG"
+          encoded=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" "$image")
+          curl -fsS -X POST "${RENDER_DEPLOY_HOOK}&imgURL=${encoded}"
+          echo "Render is deploying $image"
+      - name: Smoke test the live service until it reports this tag
+        run: python3 scripts/smoke_test.py --url "${{ vars.RENDER_URL }}" --expect-version "$TAG" --wait 900

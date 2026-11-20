@@ -1,0 +1,4 @@
+[core]
+    remote = origin
+['remote "origin"']
+    url = https://dagshub.com/jyothikasurya2002/MLOPS-FINAL-PROJECT.dvc
