@@ -34,6 +34,9 @@ data/**
 !data/processed/
 !data/inference/
 !data/**/.gitkeep
+# DVC pointers are committed; the CSV they point to lives on DagsHub (dvc pull)
+!data/raw/*.dvc
+!data/inference/*.dvc
 
 # Generated outputs (recreated by: python -m src.main)
 models/**

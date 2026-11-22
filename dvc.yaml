@@ -1,0 +1,22 @@
+# dvc.yaml  [Pipeline stages for DVC]
+# -------------------------------------------------------------------
+# Purpose   Tell DVC how to rebuild every output from the data, code and settings
+# Run       dvc pull (gets the data from DagsHub), then dvc repro (reruns only if something changed)
+# Writes    dvc.lock: the hash of every dependency and output of the last run. Commit it after each run
+# Paths     Must match paths in config.yaml (checked by tests/test_config.py)
+
+stages:
+  pipeline:
+    cmd: python -m src.main
+    deps:
+      - src
+      - data/raw/shipments.csv
+      - data/inference/new_shipments.csv
+    params:
+      - config.yaml:              # every setting; a change in config.yaml reruns the stage
+    outs:
+      - data/processed/clean.csv
+      - models/model.joblib
+      - reports/predictions.csv
+      - logs/pipeline.log:
+          cache: false            # hash in dvc.lock as evidence of the run; the file stays local
