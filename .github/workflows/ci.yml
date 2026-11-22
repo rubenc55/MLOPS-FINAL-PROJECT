@@ -1,0 +1,120 @@
+# ci.yml  [Continuous integration: checks every pull request]
+# -------------------------------------------------------------------
+# Runs      on every pull request into dev or main, on every push to them, and from deploy.yml (workflow_call)
+# Jobs      lint, test, pipeline (dvc pull + dvc repro, quality gate), docker (build and answer /health, /predict)
+# Blocks    with branch protection on dev and main, a red job blocks the merge
+# Secrets   DAGSHUB_USER, DAGSHUB_TOKEN: dvc pull, and MLflow on DagsHub only on main (prod moves only from main)
+# Packages  the exact versions in conda-lock.yml, the same as Docker
+
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -el {0}   # login shell, so the micromamba environment is active in every step
+
+jobs:
+  lint:
+    name: lint (flake8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: conda-lock.yml
+          environment-name: shipping-cost
+          cache-environment: true
+      - name: flake8 (the grader's flags)
+        run: flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
+
+  test:
+    name: test (pytest, 90% branch coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: conda-lock.yml
+          environment-name: shipping-cost
+          cache-environment: true
+      - name: pytest with branch coverage, 90% floor
+        run: pytest --cov=src --cov-branch --cov-report=term-missing --cov-fail-under=90
+
+  pipeline:
+    name: pipeline (dvc repro, quality gate)
+    runs-on: ubuntu-latest
+    env:
+      # MLflow credentials only on pushes to main: a pull request never registers a model or moves prod
+      MLFLOW_TRACKING_USERNAME: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.DAGSHUB_USER || '' }}
+      MLFLOW_TRACKING_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.DAGSHUB_TOKEN || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: conda-lock.yml
+          environment-name: shipping-cost
+          cache-environment: true
+      - name: DagsHub login (token only in this runner, never committed)
+        run: |
+          dvc remote modify origin --local auth basic
+          dvc remote modify origin --local user "${{ secrets.DAGSHUB_USER }}"
+          dvc remote modify origin --local password "${{ secrets.DAGSHUB_TOKEN }}"
+      - name: dvc pull
+        run: dvc pull
+      - name: dvc.lock matches the code, data and config.yaml in this commit
+        run: |
+          dvc status
+          test "$(dvc status --json)" = "{}" || { echo "dvc.lock is stale: run dvc repro and commit dvc.lock"; exit 1; }
+      - name: Run the pipeline end to end (fails if the quality gate fails)
+        run: dvc repro --force
+      - uses: actions/upload-artifact@v7
+        with:
+          name: model
+          path: models/model.joblib
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pipeline-log
+          path: logs/pipeline.log
+          retention-days: 30
+
+  docker:
+    name: docker (build, /health, /predict)
+    needs: pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: model
+          path: models
+      - name: docker build
+        run: docker build -t api .
+      - name: Run the container and call /health and /predict
+        run: |
+          docker run -d --name api -p 8000:8000 api
+          for _ in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 2; done
+          curl -sf localhost:8000/health
+          curl -sf -X POST localhost:8000/predict -H "Content-Type: application/json" \
+            -d '{"shipments": [{"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General",
+                 "distance_km": 8928.0, "weight_kg": 1683.2, "volume_m3": 4.719, "urgent": 0, "month": 3}]}'
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:8000/predict \
+            -H "Content-Type: application/json" -d '{"shipments": []}')
+          test "$code" = "422" || { echo "Expected 422 for an empty request, got $code"; exit 1; }
+      - name: Container logs
+        if: always()
+        run: docker logs api

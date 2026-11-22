@@ -7,7 +7,7 @@
 - Target: cost_usd | Problem type: regression | ID column: shipment_id
 
 ## Pipeline
-- Settings: every value below (paths, target, features, validation rules, split, model, quality gate) lives in config.yaml at the repo root; src/main.py loads it with load_config into SETTINGS. Change settings there, not in code
+- Settings: every value below (paths, target, features, validation rules, split, model, quality gate) lives in config.yaml at the repo root; src/config.py loads it with load_config into SETTINGS, and src/logger.py sends logs to the console and logs/pipeline.log. Change settings there, not in code
 - Feature groups: categorical: transport_mode, cargo_type -> OneHotEncoder(handle_unknown="ignore") (text, 3 values each)
 - Feature groups: numeric: distance_km, weight_kg, volume_m3, urgent, month -> passthrough (no scaling for trees)
 - Excluded columns: shipment_id (identifier, kept next to each prediction for traceability)
@@ -21,15 +21,22 @@
 - features.py signature: get_feature_preprocessor(categorical_columns, numeric_columns), settings per group: none
 - Agreed extra parameters: validate_dataframe(allowed_values=None, numeric_ranges=None)
 - utils.py helpers: load_csv, save_csv, save_model, load_model
-- Environment: no packages beyond pandas, numpy, scikit-learn, joblib, pyyaml (reads config.yaml), pytest, pytest-cov, flake8 (confirm in item 4)
+- Environment: no packages beyond pandas, numpy, scikit-learn, joblib, pyyaml (reads config.yaml), mlflow-skinny (tracking), python-dotenv (reads .env), pytest, pytest-cov, flake8, dvc (data versioning)
 
 ## Decisions and owners
 - Decisions: quality gate -> mape <= 0.18 on validation; mae reported, not gated (2026-11-09, README release rule)
 - Decisions: final model -> trained on the train split only; test split stays sealed (README check, row 2)
 - Decisions: out-of-range shipments -> historical min-max as initial rules in validate (README check, row 3)
-- Decisions: serving -> batch inference now; real-time API in stage 3 (README check, row 4)
+- Decisions: serving -> batch inference in main.py and real-time API in src/api.py (GET /health, POST /predict), both through clean_dataframe, validate_dataframe and run_inference; Docker image from conda-lock.yml (README section 5)
 - Decisions: raw data -> sheet "data" exported once to data/raw/shipments.csv, never committed (README check, row 5)
 - Decisions: unknown categories -> validate rejects them first; OneHotEncoder ignores them as a safety net
+- Decisions: failed gate -> every run deletes the previous model and predictions first; a failed gate is logged as ERROR and saves nothing (README section 4)
+- Decisions: tracking -> MLflow on the project's DagsHub repo instead of W&B (W&B sign-ups paused, course announcement 2026-11-22); main.py owns one MLflow run per pipeline run; only a model that passes the gate and writes predictions is registered as shipping_cost_model with alias prod (README section 4)
+- Decisions: CI -> ci.yml runs lint, test (90% branch floor), pipeline (dvc pull, stale check, dvc repro) and docker on every pull request into dev or main; MLflow registers prod only on pushes to main (README section 6)
+- Decisions: release -> a GitHub Release from main runs deploy.yml: release guard, CI on the tag, image with the MLflow prod model, smoke test, push to ghcr.io, Render deploy hook, live smoke test; rollback redeploys the image of an older tag (README section 7)
+- Decisions: baseline -> no-ML table = median train cost per transport mode, scored on validation in every run (mape 0.560 vs model 0.165 on 2026-11-20); reported, not gated (README section 1)
+- Decisions: data versioning -> DVC pointers (*.csv.dvc) and dvc.lock in Git, CSV files and model on DagsHub; dvc repro runs python -m src.main; logs/pipeline.log is not a DVC output (README sections 3 and 4)
+- Decisions: new_shipments.csv -> stand-in of the first 20 shipments without cost_usd until the TMS export exists
 - Owners (team): utils -> Ruben Cuellar (@rubenc55), branch feature/utils
 - Owners (team): load_data -> Ruben Cuellar (@rubenc55), branch feature/load-data
 - Owners (team): clean_data -> Ruben Cuellar (@rubenc55), branch feature/clean-data
