@@ -33,6 +33,7 @@
 - Decisions: failed gate -> every run deletes the previous model and predictions first; a failed gate is logged as ERROR and saves nothing (README section 4)
 - Decisions: tracking -> main.py owns one W&B run per pipeline run; only a model that passes the gate and writes predictions is logged as artifact shipping_cost_model with alias prod (README section 4)
 - Decisions: CI -> ci.yml runs lint, test (90% branch floor), pipeline (dvc pull, stale check, dvc repro) and docker on every pull request into dev or main; W&B registers prod only on pushes to main (README section 6)
+- Decisions: release -> a GitHub Release from main runs deploy.yml: release guard, CI on the tag, image with the W&B prod model, smoke test, push to ghcr.io, Render deploy hook, live smoke test; rollback redeploys the image of an older tag (README section 7)
 - Decisions: data versioning -> DVC pointers (*.csv.dvc) and dvc.lock in Git, CSV files and model on DagsHub; dvc repro runs python -m src.main; logs/pipeline.log is not a DVC output (README sections 3 and 4)
 - Decisions: new_shipments.csv -> stand-in of the first 20 shipments without cost_usd until the TMS export exists
 - Owners (team): utils -> Ruben Cuellar (@rubenc55), branch feature/utils

@@ -41,7 +41,7 @@ def test_integration_project_config_has_every_setting_the_pipeline_reads():
         "paths", "logging", "problem", "features", "validation", "split", "model_params", "quality_gate", "tracking"
     }
     assert set(settings["paths"]) == {
-        "raw_data", "inference_data", "clean_data", "model", "predictions", "log_file"
+        "raw_data", "inference_data", "clean_data", "model", "model_info", "predictions", "log_file"
     }
     assert all(path.is_absolute() for path in settings["paths"].values())
     assert settings["paths"]["log_file"] == PROJECT_ROOT / "logs" / "pipeline.log"

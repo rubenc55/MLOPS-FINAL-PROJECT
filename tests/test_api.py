@@ -1,6 +1,7 @@
 """Tests for src/api.py: /health, /predict, the strict request contract and start-up errors."""
 
 import copy
+import json
 
 import pandas as pd
 import pytest
@@ -45,6 +46,7 @@ def client(tmp_path, monkeypatch):
     )
     settings = copy.deepcopy(SETTINGS)
     settings["paths"]["model"] = tmp_path / "model.joblib"
+    settings["paths"]["model_info"] = tmp_path / "model_info.json"
     settings["paths"]["log_file"] = tmp_path / "logs" / "pipeline.log"
     save_model(model, settings["paths"]["model"])
     monkeypatch.setattr(api, "SETTINGS", settings)
@@ -53,13 +55,28 @@ def client(tmp_path, monkeypatch):
 
 
 def test_unit_health_reports_ok_and_model(client):
-    """/health answers 200 with the served model file name."""
+    """/health answers 200 with the release version, the served model file and no lineage when none was fetched."""
     test_client, _ = client
 
     response = test_client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "model": "model.joblib"}
+    assert response.json() == {"status": "ok", "version": "dev", "model": "model.joblib", "model_info": {}}
+
+
+def test_integration_health_shows_release_and_lineage(client, monkeypatch):
+    """With the lineage file of the prod model, /health traces the service to its W&B run, data and commit."""
+    _, model = client
+    settings = api.SETTINGS
+    info = {"version": "v3", "wandb_run": "team/shipping-cost/abc123", "git_commit": "def456", "data_md5": "4db8"}
+    settings["paths"]["model_info"].write_text(json.dumps(info), encoding="utf-8")
+    monkeypatch.setattr(api, "APP_VERSION", "v1.2.0")
+
+    with TestClient(api.app) as test_client:
+        body = test_client.get("/health").json()
+
+    assert body["version"] == "v1.2.0"
+    assert body["model_info"] == info
 
 
 def test_integration_predict_matches_batch_inference(client):
@@ -134,6 +151,7 @@ def test_unit_startup_without_model_fails_clearly(tmp_path, monkeypatch):
     """Without a released model the service does not start, and the error says how to create one."""
     settings = copy.deepcopy(SETTINGS)
     settings["paths"]["model"] = tmp_path / "missing.joblib"
+    settings["paths"]["model_info"] = tmp_path / "model_info.json"
     settings["paths"]["log_file"] = tmp_path / "pipeline.log"
     monkeypatch.setattr(api, "SETTINGS", settings)
 

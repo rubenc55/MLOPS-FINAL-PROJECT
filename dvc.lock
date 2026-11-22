@@ -13,8 +13,8 @@ stages:
       size: 243653
     - path: src
       hash: md5
-      md5: 1091a330693d124306c7433a245268d3.dir
-      size: 43802
+      md5: 8bc15bd0456d4b7b991416ee875a5e0c.dir
+      size: 46492
       nfiles: 14
     params:
       config.yaml:
@@ -41,6 +41,7 @@ stages:
           inference_data: data/inference/new_shipments.csv
           clean_data: data/processed/clean.csv
           model: models/model.joblib
+          model_info: models/model_info.json
           predictions: reports/predictions.csv
           log_file: logs/pipeline.log
         problem:

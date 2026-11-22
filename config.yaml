@@ -12,6 +12,7 @@ paths:
   inference_data: data/inference/new_shipments.csv
   clean_data: data/processed/clean.csv    # written in training, after clean and validate
   model: models/model.joblib              # written only if the quality gate passes
+  model_info: models/model_info.json     # lineage of the prod model (deploy: scripts/fetch_prod_model.py)
   predictions: reports/predictions.csv
   log_file: logs/pipeline.log             # audit trail of every run, appended (not committed)
 

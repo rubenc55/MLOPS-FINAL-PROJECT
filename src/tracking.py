@@ -4,15 +4,19 @@ Inputs: SETTINGS["tracking"] (mode, project, entity, model_name, prod_alias), th
 metrics from evaluate and the saved model file; WANDB_API_KEY from .env (never in config.yaml).
 Outputs: one W&B run per pipeline run (settings, data hash, git commit, metrics, gate result) and,
 only after the gate passes, a model artifact version with the prod alias.
-Used by: main, which owns the run (start, log, end); the API and deploy later load the prod model.
+Used by: main, which owns the run (start, log, end); scripts/fetch_prod_model.py (deploy), which
+downloads the prod model for the release image.
 Why: every model can be traced to its run, data version and commit, and the gate decides which one
 is prod; with no API key the pipeline still runs, with tracking disabled.
 """
 
 import hashlib
+import json
 import logging
 import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import wandb
@@ -103,6 +107,37 @@ def log_model(run, model_path: Path, tracking: dict, metadata: dict) -> None:
     artifact.add_file(str(model_path))
     run.log_artifact(artifact, aliases=["latest", tracking["prod_alias"]])
     logger.info("Model logged to W&B as %s:%s", tracking["model_name"], tracking["prod_alias"])
+
+
+def fetch_prod_model(tracking: dict, model_path: Path, info_path: Path) -> dict:
+    """Download the model aliased prod from W&B and write its lineage next to it.
+
+    Inputs: tracking settings, model_path (where the API loads the model), info_path (lineage JSON).
+    Outputs: the lineage dict (artifact version, W&B run, git commit, data md5, metrics), also
+    written to info_path; the model file is replaced.
+    Why: the release image serves the registered prod model, and /health shows where it came from.
+    """
+    if not os.environ.get("WANDB_API_KEY"):
+        raise RuntimeError("WANDB_API_KEY is not set, so the prod model cannot be downloaded (see .env.example)")
+    name = f"{tracking['project']}/{tracking['model_name']}:{tracking['prod_alias']}"
+    if tracking["entity"]:
+        name = f"{tracking['entity']}/{name}"
+    artifact = wandb.Api().artifact(name, type="model")
+    model_path, info_path = Path(model_path), Path(info_path)
+    with tempfile.TemporaryDirectory() as download_dir:
+        downloaded = Path(artifact.download(root=download_dir)) / model_path.name
+        if not downloaded.is_file():
+            raise FileNotFoundError(f"{name} has no file {model_path.name}; it was not logged by log_model")
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(downloaded, model_path)
+    run = artifact.logged_by()
+    info = {
+        "artifact": artifact.qualified_name, "version": artifact.version, "aliases": artifact.aliases,
+        "wandb_run": "/".join(run.path) if run else None, **artifact.metadata,
+    }
+    info_path.write_text(json.dumps(info, indent=2), encoding="utf-8")
+    logger.info("Downloaded %s (%s) to %s", artifact.qualified_name, artifact.version, model_path)
+    return info
 
 
 def end_run(run, error: Exception | None = None) -> None:

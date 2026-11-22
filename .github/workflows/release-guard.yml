@@ -1,0 +1,39 @@
+# release-guard.yml  [Stops any release that is not cut from main]
+# -------------------------------------------------------------------
+# Runs      first in deploy.yml (workflow_call), for every release and every rollback
+# Checks    the tag exists and its commit is on main; otherwise deploy stops before CI, build or Render
+# Why       only reviewed, merged code on main may reach the live service
+
+name: Release guard
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to check, e.g. v1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: release guard (tag on main)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # full history, so the tag can be compared with main
+      - name: The tag points to a commit on main
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git fetch --force --tags origin
+          commit=$(git rev-list -n 1 "refs/tags/$TAG" 2>/dev/null) || { echo "::error::Tag $TAG does not exist"; exit 1; }
+          if git merge-base --is-ancestor "$commit" origin/main; then
+            echo "$TAG ($commit) is on main"
+          else
+            echo "::error::$TAG ($commit) is not on main. Releases are published only from main"
+            exit 1
+          fi
