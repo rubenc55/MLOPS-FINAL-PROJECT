@@ -1,6 +1,7 @@
 """Tests for src/main.py: the split, the quality gate and the full pipeline run."""
 
 import copy
+import logging
 
 import pandas as pd
 import pytest
@@ -112,6 +113,21 @@ def test_integration_run_pipeline_failed_gate_saves_no_model(tmp_path):
 
     assert not settings["paths"]["model"].exists()
     assert not settings["paths"]["predictions"].exists()
+
+
+def test_integration_failed_gate_removes_model_from_earlier_run(tmp_path, caplog):
+    """Model and predictions of an earlier run are deleted, so a failed gate leaves nothing to deploy; it is logged."""
+    settings = _make_settings(tmp_path, quality_gate={"mape": 0.0})
+    for name in ("model", "predictions"):
+        settings["paths"][name].parent.mkdir(parents=True)
+        settings["paths"][name].write_text("from an earlier run", encoding="utf-8")
+
+    with caplog.at_level(logging.INFO), pytest.raises(ValueError, match="quality gate failed"):
+        run_pipeline(settings)
+
+    assert not settings["paths"]["model"].exists()
+    assert not settings["paths"]["predictions"].exists()
+    assert any(r.levelno == logging.ERROR and "quality gate failed: mape" in r.getMessage() for r in caplog.records)
 
 
 def test_unit_check_quality_gate_missing_metric_raises():

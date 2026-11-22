@@ -73,7 +73,9 @@ def check_quality_gate(metrics: dict[str, float], quality_gate: dict[str, float]
         if metrics[name] > limit
     ]
     if failures:
-        raise ValueError(f"Model not released, quality gate failed: {'; '.join(failures)}")
+        message = f"Model not released, quality gate failed: {'; '.join(failures)}"
+        logger.error(message)  # keep the decision in logs/pipeline.log, not only in the traceback
+        raise ValueError(message)
     logger.info("Quality gate met: every validation metric is within its limit")
 
 
@@ -148,6 +150,20 @@ def _predict_new_shipments(settings: dict, model) -> pd.DataFrame:
     return output
 
 
+def _remove_previous_outputs(paths: dict) -> None:
+    """Delete the model and predictions left by an earlier run, before anything is trained.
+
+    Inputs: SETTINGS["paths"] (uses "model" and "predictions").
+    Outputs: None; the files are removed if they exist.
+    Why: if this run fails the gate, no older model or predictions stay on disk looking like its result;
+    released models are kept in the model registry, not in models/.
+    """
+    for name in ("model", "predictions"):
+        if paths[name].exists():
+            logger.info("Removing %s from an earlier run: %s", name, paths[name])
+            paths[name].unlink()
+
+
 def run_pipeline(settings: dict) -> dict[str, float]:
     """Run training, the release gate and batch inference with the given settings.
 
@@ -156,6 +172,7 @@ def run_pipeline(settings: dict) -> dict[str, float]:
     Why: settings as a parameter lets tests run the whole pipeline without touching real folders.
     """
     logger.info("Starting the shipping cost pipeline")
+    _remove_previous_outputs(settings["paths"])
     model, val_metrics = _train_and_release(settings)
     _predict_new_shipments(settings, model)
     logger.info(

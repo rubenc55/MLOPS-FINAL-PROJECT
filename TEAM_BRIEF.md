@@ -30,6 +30,7 @@
 - Decisions: serving -> batch inference now; real-time API in stage 3 (README check, row 4)
 - Decisions: raw data -> sheet "data" exported once to data/raw/shipments.csv, never committed (README check, row 5)
 - Decisions: unknown categories -> validate rejects them first; OneHotEncoder ignores them as a safety net
+- Decisions: failed gate -> every run deletes the previous model and predictions first; a failed gate is logged as ERROR and saves nothing (README section 4)
 - Decisions: data versioning -> DVC pointers (*.csv.dvc) and dvc.lock in Git, CSV files and model on DagsHub; dvc repro runs python -m src.main (README sections 3 and 4)
 - Decisions: new_shipments.csv -> stand-in of the first 20 shipments without cost_usd until the TMS export exists
 - Owners (team): utils -> Ruben Cuellar (@rubenc55), branch feature/utils

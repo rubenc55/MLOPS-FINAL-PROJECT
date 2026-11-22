@@ -13,8 +13,8 @@ stages:
       size: 243653
     - path: src
       hash: md5
-      md5: 56a839567d4a85a8c08de8967a35f45e.dir
-      size: 31872
+      md5: c99b29800c1eace455879962b4937967.dir
+      size: 32682
       nfiles: 12
     params:
       config.yaml:
@@ -87,7 +87,7 @@ stages:
       size: 243653
     - path: logs/pipeline.log
       hash: md5
-      md5: 9b48d874b58e2bb3b2541d5d5172dae5
+      md5: 14dca0f44cf5362ee8db459397fe549a
       size: 2832
     - path: models/model.joblib
       hash: md5
