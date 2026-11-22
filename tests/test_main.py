@@ -157,6 +157,16 @@ def test_integration_passing_run_registers_model_as_prod(tmp_path, monkeypatch):
     assert calls["end_run"] == [None]
 
 
+def test_integration_run_logs_model_against_no_ml_baseline(tmp_path, caplog):
+    """Every run reports validation mape of the model next to the no-ML baseline, the business case evidence."""
+    settings = _make_settings(tmp_path, quality_gate={"mape": 1_000_000.0})
+
+    with caplog.at_level(logging.INFO):
+        run_pipeline(settings)
+
+    assert "no-ML baseline (median cost per transport_mode)" in caplog.text
+
+
 def test_integration_failed_gate_registers_nothing_and_fails_the_run(tmp_path, monkeypatch):
     """A failed gate never reaches the registry, and the W&B run is closed as failed with the gate message."""
     settings = _make_settings(tmp_path, quality_gate={"mape": 0.0})

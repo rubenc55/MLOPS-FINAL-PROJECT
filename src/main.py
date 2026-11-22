@@ -18,7 +18,7 @@ from sklearn.model_selection import train_test_split
 
 from src.clean_data import clean_dataframe
 from src.config import PROJECT_ROOT, SETTINGS
-from src.evaluate import evaluate_model
+from src.evaluate import evaluate_baseline, evaluate_model
 from src.features import get_feature_preprocessor
 from src.infer import run_inference
 from src.load_data import load_raw_data
@@ -85,8 +85,8 @@ def check_quality_gate(metrics: dict[str, float], quality_gate: dict[str, float]
 def _train_and_release(settings: dict, run) -> tuple:
     """Train on the train split, release the model only if the validation gate passes, then save it.
 
-    Inputs: SETTINGS (paths, problem, features, validation, split, model_params, quality_gate)
-    and the W&B run, which receives the validation and test metrics.
+    Inputs: SETTINGS (paths, problem, features, validation, split, model_params, quality_gate, baseline)
+    and the W&B run, which receives the validation, baseline and test metrics.
     Outputs: (fitted Pipeline, validation metrics, test metrics).
     Why: one place wires load, clean, validate, save the clean table, split, recipe, fit, gate
     and save, in the agreed order.
@@ -118,6 +118,12 @@ def _train_and_release(settings: dict, run) -> tuple:
     #    if the gate fails, the error stops here and nothing is saved
     val_metrics = evaluate_model(model, x_val, y_val, problem["problem_type"])
     log_metrics(run, val_metrics, "val")
+    baseline_metrics = evaluate_baseline(x_train, y_train, x_val, y_val, settings["baseline"]["group_column"])
+    log_metrics(run, baseline_metrics, "baseline_val")
+    logger.info(
+        "Validation mape: model %.3f | no-ML baseline (median cost per %s) %.3f",
+        val_metrics["mape"], settings["baseline"]["group_column"], baseline_metrics["mape"],
+    )
     check_quality_gate(val_metrics, settings["quality_gate"])
 
     # 5. Test is scored once, after the release decision, only to report it

@@ -22,11 +22,12 @@ Sales reps and the Pricing team struggle with slow quote responses because each 
 | --- | --- | --- | --- |
 | Business KPI | Quote response time | 24 to 48 h (estimate) | At most 2 h, within 3 months of go-live |
 | Business KPI | Hit rate | 20% | 35%, within 3 months of go-live |
-| ML metric (reported) | `mae` | To be measured | Reported on every run; not a release condition |
-| ML metric (quality gate) | `mape` | To be measured | At most 18% on unseen data |
+| ML metric (reported) | `mae` | 892 USD (no-ML table, validation) | Reported on every run; not a release condition |
+| ML metric (quality gate) | `mape` | 56.0% (no-ML table, validation) | At most 18% on unseen data |
 
 - **Link:** a low `mae` lets sales reps trust the estimated cost and quote without waiting for Pricing, which cuts response time and raises the hit rate.
 - **Release rule:** if `mape` on validation exceeds 18%, the model is not released. `mae` is reported on every run but does not block release (decision 2026-11-09: costs range from hundreds to tens of thousands of USD, so one absolute limit does not fit every shipment; first real run on validation: mae 274 USD, mape 16.6%).
+- **Baseline:** the no-ML table is the median train cost per transport mode, the best of three simple tables we tried (`evaluate_baseline` in `src/evaluate.py`, `baseline` in `config.yaml`). Every run logs it next to the model, so the comparison is repeated with each retraining.
 - **Limits:** under 5 min per estimate; cost per prediction negligible on current infrastructure (estimate).
 
 ### Solution
@@ -43,8 +44,19 @@ When a sales rep enters a quote request, the Pricing analyst sees the model's es
 - **Personal or sensitive data:** No. The dataset is synthetic and has no customer data.
 
 ### Value, cost and risks
-- **Benefit:** cost estimates in minutes instead of 24 to 48 h, using more variables than a generic tariff table (accuracy advantage not yet measured).
+- **Benefit:** cost estimates in minutes instead of 24 to 48 h. On the same unseen shipments the model is about 3 times more accurate than a tariff table (measured 2026-11-20, train 3,500 / validation 750 / test 750 shipments):
+
+| Method | Validation `mape` | Validation `mae` | Test `mape` | Test `mae` |
+| --- | --- | --- | --- | --- |
+| One median cost for every shipment | 88.5% | 1,046 USD | 96.3% | 917 USD |
+| Median cost per transport mode (baseline) | 56.0% | 892 USD | 59.8% | 756 USD |
+| Rate per km by mode and cargo type, urgent premium | 69.7% | 860 USD | 63.5% | 700 USD |
+| Model (`RandomForestRegressor`) | 16.5% | 274 USD | 16.0% | 215 USD |
+
+73.5% of the model's validation estimates are within 18% of the carrier cost, against 16.9% for the per-km table.
 - **Rough cost (estimate):** Business Analytics team, about 8,000 USD per month in salaries for 3 months (about 24,000 USD); existing IT infrastructure; 12 weeks to production.
+- **MLOps running cost:** 0 USD per month at the current volume, on the free plans of GitHub Actions (CI and deploy), DagsHub (data), W&B (runs and model registry) and Render (API, sleeps after 15 minutes without requests). A paid Render plan is needed only when quotes cannot wait about a minute for the service to wake up (check each provider's pricing page before scaling).
+- **When it is not worth it:** for a branch with few quotes, or if carriers publish fixed tariffs, the median table above is cheaper to run and good enough.
 - **Scales to:** all company branches, routes and services.
 
 | Risk | Mitigation |
@@ -53,9 +65,10 @@ When a sales rep enters a quote request, the Pricing analyst sees the model's es
 | Business Analytics has no Git experience | All code is managed in Git from this project onwards |
 | Poorly captured data in the TMS (wrong units, typos) | Data cleaning in the SQL database and data validation in the pipeline |
 | Market costs change (for example fuel prices) | Weekly retraining to capture price changes |
+| A retrained model is worse than the one in use | Quality gate (`mape` at most 0.18 on validation): a failing model is not saved, registered or deployed |
+| A broken release reaches Pricing | CI on every pull request, release only from `main`, smoke test of the live service, rollback to the previous tag in minutes (section 7) |
 
 ### Open gaps
-- Benefit over a simple tariff table (for example median cost per transport mode) is not measured.
 - Current quote response time is an estimate; to be measured in the TMS.
 - Maturity levels for tools, processes and people are not rated.
 - Rules that define a shipment "outside the estimation parameters" are not defined.
@@ -333,3 +346,32 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 | `evaluate.py` | Enrique (@puigenrique) | `feature/evaluate` |
 | `infer.py` | Victoria (@victoriasesilva) | `feature/infer` |
 | `main.py` | Ruben Cuellar (@rubenc55) | `feature/main` |
+
+## 11. Model card
+
+| Item | Value |
+| --- | --- |
+| Model | `RandomForestRegressor` (`n_estimators` 200, `max_features` 0.5, `min_samples_leaf` 5, seed 42) in one scikit-learn Pipeline with the one-hot encoder of `features.py` |
+| Predicts | `cost_usd`, the carrier cost in USD of one shipment, for Pricing to review before Sales adds the margin |
+| Inputs | `transport_mode`, `cargo_type`, `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month`, all known at quoting time; `shipment_id` only identifies the row |
+| Training data | `data/raw/shipments.csv` (5,000 synthetic shipments, no personal data), version in `data/raw/shipments.csv.dvc`; split 70/15/15, fitted on train only |
+| Quality gate | `mape` at most 0.18 on validation, otherwise nothing is saved, registered or deployed |
+| Metrics (2026-11-20) | Validation `mape` 16.5%, `mae` 274 USD; test `mape` 16.0%, `mae` 215 USD; no-ML table: validation `mape` 56.0% (section 1) |
+| Valid range | The rules in `config.yaml` (`validation`): known modes and cargo types, distance 50 to 12,000 km, weight 10 to 9,900 kg, volume 0.028 to 93.213 m3, month 1 to 12. Shipments outside them get `422` and go to Pricing by hand |
+| Limits | Least accurate on the most expensive quarter of shipments (above about 830 USD): validation `mape` 20.7% against about 15% for the other three quarters, so Pricing confirms those estimates with the carrier first; trained on one synthetic year, so seasonality and fuel prices beyond it are not learned; assumes declared weight and volume are the real ones |
+| Trace a prediction | `GET /health` of the live service: release `version`, W&B model version and run, Git commit and data md5 of the served model |
+| Owner | Business Analytics retrains weekly and monitors; IT runs the infrastructure |
+
+## 12. Changelog
+
+One entry per release tag; the notes of each GitHub Release copy its entry.
+
+### v1.0.0 (date of release)
+- Settings in `config.yaml` read by `src/config.py`; one logger to the console and `logs/pipeline.log`
+- Data versioned with DVC: pointers and `dvc.lock` in Git, data on DagsHub; `dvc repro` runs `python -m src.main`
+- Quality gate enforced: `mape` at most 0.18 on validation, older outputs removed, failures logged
+- W&B runs per pipeline run; the model that passes the gate is registered as `shipping_cost_model:prod`
+- FastAPI service (`/health`, `/predict`, `/docs`) in a Docker image built from `conda-lock.yml`
+- CI on every pull request: flake8, tests at 90% branch coverage, pipeline with the gate, Docker build
+- Release and deploy to Render from GitHub Releases, smoke test, rollback by tag
+- No-ML baseline (median cost per transport mode) scored in every run as evidence for the business case

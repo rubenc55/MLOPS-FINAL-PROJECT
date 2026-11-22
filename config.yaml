@@ -64,6 +64,11 @@ model_params:
 quality_gate:
   mape: 0.18
 
+# No-ML baseline for the business case (README section 1): median train cost per group, scored on
+# validation in every run and reported next to the model; it does not block the release
+baseline:
+  group_column: transport_mode
+
 # Experiment tracking and model registry in W&B (Weights & Biases, now CoreWeave Forge), driven by main.py.
 # The API key is a secret: WANDB_API_KEY in .env (see .env.example), never here
 tracking:
