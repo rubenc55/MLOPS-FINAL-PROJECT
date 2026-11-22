@@ -18,5 +18,5 @@ stages:
       - data/processed/clean.csv
       - models/model.joblib
       - reports/predictions.csv
-      - logs/pipeline.log:
-          cache: false            # hash in dvc.lock as evidence of the run; the file stays local
+    # logs/pipeline.log is written on every run but is not an output: its timestamps would change
+    # dvc.lock on every run, so a fresh dvc pull and dvc repro would leave something to commit

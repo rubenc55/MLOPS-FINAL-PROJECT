@@ -54,9 +54,9 @@ def test_integration_dvc_stage_matches_config_paths():
     """dvc.yaml runs python -m src.main with the config.yaml inputs and outputs, so dvc.lock tracks the real files."""
     stage = yaml.safe_load((PROJECT_ROOT / "dvc.yaml").read_text(encoding="utf-8"))["stages"]["pipeline"]
     paths = {name: path.relative_to(PROJECT_ROOT).as_posix() for name, path in SETTINGS["paths"].items()}
-    outs = [out if isinstance(out, str) else next(iter(out)) for out in stage["outs"]]
 
     assert stage["cmd"] == "python -m src.main"
     assert {"src", paths["raw_data"], paths["inference_data"]} == set(stage["deps"])
     assert stage["params"] == [{"config.yaml": None}]
-    assert set(outs) == {paths["clean_data"], paths["model"], paths["predictions"], paths["log_file"]}
+    assert set(stage["outs"]) == {paths["clean_data"], paths["model"], paths["predictions"]}
+    assert paths["log_file"] not in stage["outs"]  # timestamps would make dvc.lock change on every run
