@@ -49,7 +49,7 @@ def _make_settings(tmp_path, quality_gate: dict) -> dict:
     }
     settings["model_params"] = {"n_estimators": 10}
     settings["quality_gate"] = quality_gate
-    settings["tracking"]["mode"] = "disabled"  # tests never create real W&B runs
+    settings["tracking"]["mode"] = "disabled"  # tests never create real MLflow runs
     return settings
 
 
@@ -134,7 +134,7 @@ def test_integration_failed_gate_removes_model_from_earlier_run(tmp_path, caplog
 
 
 def _spy_tracking(monkeypatch) -> dict:
-    """Record main's calls to log_model and end_run, so a test can check what W&B would receive."""
+    """Record main's calls to log_model and end_run, so a test can check what MLflow would receive."""
     calls = {"log_model": [], "end_run": []}
     monkeypatch.setattr("src.main.log_model", lambda run, path, tracking, metadata: calls["log_model"].append(
         (path, tracking["prod_alias"], metadata)))
@@ -168,7 +168,7 @@ def test_integration_run_logs_model_against_no_ml_baseline(tmp_path, caplog):
 
 
 def test_integration_failed_gate_registers_nothing_and_fails_the_run(tmp_path, monkeypatch):
-    """A failed gate never reaches the registry, and the W&B run is closed as failed with the gate message."""
+    """A failed gate never reaches the registry, and the MLflow run is closed as failed with the gate message."""
     settings = _make_settings(tmp_path, quality_gate={"mape": 0.0})
     calls = _spy_tracking(monkeypatch)
 

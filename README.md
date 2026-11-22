@@ -55,7 +55,7 @@ When a sales rep enters a quote request, the Pricing analyst sees the model's es
 
 73.5% of the model's validation estimates are within 18% of the carrier cost, against 16.9% for the per-km table.
 - **Rough cost (estimate):** Business Analytics team, about 8,000 USD per month in salaries for 3 months (about 24,000 USD); existing IT infrastructure; 12 weeks to production.
-- **MLOps running cost:** 0 USD per month at the current volume, on the free plans of GitHub Actions (CI and deploy), DagsHub (data), W&B (runs and model registry) and Render (API, sleeps after 15 minutes without requests). A paid Render plan is needed only when quotes cannot wait about a minute for the service to wake up (check each provider's pricing page before scaling).
+- **MLOps running cost:** 0 USD per month at the current volume, on the free plans of GitHub Actions (CI and deploy), DagsHub (data, and MLflow runs and model registry) and Render (API, sleeps after 15 minutes without requests). A paid Render plan is needed only when quotes cannot wait about a minute for the service to wake up (check each provider's pricing page before scaling).
 - **When it is not worth it:** for a branch with few quotes, or if carriers publish fixed tariffs, the median table above is cheaper to run and good enough.
 - **Scales to:** all company branches, routes and services.
 
@@ -84,15 +84,15 @@ conda activate shipping-cost
 
 For the exact versions of CI and Docker instead, install the lock: `conda-lock install -n shipping-cost conda-lock.yml`.
 
-This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, wandb, python-dotenv, fastapi, pydantic, uvicorn, pytest, pytest-cov, flake8, dvc, httpx and conda-lock. If you created the environment before `fastapi` was added, update it with `conda env update -f environment.yml --prune`. Run every command below from the repo root with the environment active.
+This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, mlflow-skinny, python-dotenv, fastapi, pydantic, uvicorn, pytest, pytest-cov, flake8, dvc, httpx and conda-lock. If you created the environment before `mlflow-skinny` was added, update it with `conda env update -f environment.yml --prune`. Run every command below from the repo root with the environment active.
 
 Secrets go in a `.env` file at the repo root, which Git ignores. Copy the names from `.env.example` and fill in your own values:
 
 ```bash
-cp .env.example .env      # then set WANDB_API_KEY (wandb.ai > User settings > API keys)
+cp .env.example .env      # then set MLFLOW_TRACKING_USERNAME (DagsHub user) and MLFLOW_TRACKING_PASSWORD (DagsHub token)
 ```
 
-Without `WANDB_API_KEY` the pipeline still runs; it only skips W&B tracking (section 4).
+Without `MLFLOW_TRACKING_PASSWORD` the pipeline still runs; it only skips MLflow tracking (section 4). The token is the same kind as for `dvc pull` (DagsHub > Your Settings > Tokens).
 
 ## 3. Data
 
@@ -139,16 +139,17 @@ Every run first deletes the model and predictions of the previous run. If the ga
 
 ### Tracking and model registry
 
-`src/main.py` owns one W&B run per pipeline run (project `shipping-cost`, `tracking` in `config.yaml`). Each run records:
+`src/main.py` owns one MLflow run per pipeline run, on the MLflow server of the project's DagsHub repo (experiment `shipping-cost`, `tracking` in `config.yaml`; open it in DagsHub > Experiments). Each run records:
 
-| What | Where in W&B |
+| What | Where in MLflow |
 | --- | --- |
-| Every setting of `config.yaml`, the md5 of `data/raw/shipments.csv` (the same hash as in `shipments.csv.dvc`) and the Git commit | Run config: `data_md5`, `git_commit` |
-| `val_mae`, `val_mape`, and after the gate `test_mae`, `test_mape` | Run metrics |
-| Why a run stopped (failed gate or bad data) | Run state failed, summary `error` |
-| The model, only if the gate passes and the predictions are written | Artifact `shipping_cost_model`, new version with aliases `latest` and `prod`, metadata with the hash, commit and metrics |
+| Every setting of `config.yaml` | Run parameters (for example `model_params.n_estimators`) and the artifact `run_config.json` |
+| The md5 of `data/raw/shipments.csv` (the same hash as in `shipments.csv.dvc`) and the Git commit | Run tags `data_md5`, `git_commit` |
+| `val_mae`, `val_mape`, `baseline_val_mae`, `baseline_val_mape`, and after the gate `test_mae`, `test_mape` | Run metrics |
+| Why a run stopped (failed gate or bad data) | Run status FAILED, tag `error` |
+| The model, only if the gate passes and the predictions are written | Registered model `shipping_cost_model`: a new version with tags `data_md5` and `git_commit`, and the alias `prod` moved to it |
 
-So `prod` always points to the last model that met the gate, and any prod model leads back to its run, data version and commit. Without `WANDB_API_KEY` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing.
+So `prod` always points to the last model that met the gate, and any prod model leads back to its run, data version and commit. Without `MLFLOW_TRACKING_PASSWORD` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing.
 
 ## 5. Serve the API
 
@@ -156,7 +157,7 @@ So `prod` always points to the last model that met the gate, and any prod model 
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /health` | `status` ok, the release `version`, the `model` file and `model_info`: W&B version, run, Git commit and data md5 of the prod model (`{}` for a model trained locally) |
+| `GET /health` | `status` ok, the release `version`, the `model` file and `model_info`: registered model version, MLflow run, Git commit, data md5 and metrics of the prod model (`{}` for a model trained locally) |
 | `POST /predict` | Estimated `cost_usd` per shipment, in the request order |
 | `GET /docs` | The contract and a form to try it, with the sample below (the only UI) |
 
@@ -207,7 +208,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 | `pipeline (dvc repro, quality gate)` | `dvc pull`, then `dvc status` must be clean, then `dvc repro --force` | `dvc.lock` is stale, data validation fails or the gate is not met |
 | `docker (build, /health, /predict)` | `docker build -t api .` with the model of the pipeline job, then calls the running container | the image does not build, or `/health`, `/predict` or the 422 check fail |
 
-With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. The pipeline job needs the GitHub Secrets `DAGSHUB_USER` and `DAGSHUB_TOKEN` for `dvc pull`. It registers the model in W&B (`WANDB_API_KEY`) only on pushes to `main`, so a pull request never moves `prod`; the run log is kept as the `pipeline-log` artifact of each run.
+With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. The pipeline job needs the GitHub Secrets `DAGSHUB_USER` and `DAGSHUB_TOKEN` for `dvc pull`. It gets the MLflow credentials (the same DagsHub secrets) only on pushes to `main`, so a pull request never registers a model or moves `prod`; the run log is kept as the `pipeline-log` artifact of each run.
 
 ## 7. Release, deploy and roll back
 
@@ -217,7 +218,7 @@ Nothing reaches the live service without a person publishing a GitHub Release fr
 | --- | --- | --- |
 | 1 | `release guard (tag on main)` ([`release-guard.yml`](.github/workflows/release-guard.yml)) | the tag is not on `main` |
 | 2 | CI again on the tagged commit (all four jobs of `ci.yml`) | any check is red |
-| 3 | `build release image (prod model)`: `python -m scripts.fetch_prod_model` downloads `shipping_cost_model:prod` from W&B with its lineage (`models/model_info.json`), then `docker build --build-arg APP_VERSION=<tag>` | there is no prod model or the image does not build |
+| 3 | `build release image (prod model)`: `python -m scripts.fetch_prod_model` downloads `shipping_cost_model@prod` from MLflow on DagsHub with its lineage (`models/model_info.json`), then `docker build --build-arg APP_VERSION=<tag>` | there is no prod model or the image does not build |
 | 4 | Smoke test of the image, then push to `ghcr.io/<owner>/<repo>:<tag>` | `scripts/smoke_test.py` fails |
 | 5 | `deploy to Render and smoke test`: the Render deploy hook gets the image of this tag, then `scripts/smoke_test.py` waits until the live `/health` reports the tag | the live service does not answer, or answers with the old tag |
 
@@ -225,7 +226,7 @@ To release:
 
 1. Merge into `main` through pull requests, with CI green.
 2. On GitHub: Releases > Draft a new release, new tag `vX.Y.Z` on target `main`, notes from the changelog at the end of this README, Publish.
-3. Watch Actions > Deploy. When it is green, `GET <RENDER_URL>/health` shows the new `version` and, in `model_info`, the W&B version, run, Git commit and data md5 of the served model.
+3. Watch Actions > Deploy. When it is green, `GET <RENDER_URL>/health` shows the new `version` and, in `model_info`, the model version, MLflow run, Git commit and data md5 of the served model.
 
 Check the live service by hand at any time (Render free services sleep after 15 minutes and wake on the first call):
 
@@ -239,7 +240,7 @@ python scripts/smoke_test.py --url <RENDER_URL>
 | --- | --- | --- | --- | --- |
 | (rollback practice, filled after the first two releases) | | | | |
 
-Settings the repo owner adds once (Settings > Secrets and variables > Actions): secrets `WANDB_API_KEY`, `DAGSHUB_USER`, `DAGSHUB_TOKEN`, `RENDER_DEPLOY_HOOK` (Render > service > Settings > Deploy Hook) and variable `RENDER_URL` (`https://<service>.onrender.com`). The Render service is an image-backed web service that pulls `ghcr.io/<owner>/<repo>:<tag>`.
+Settings the repo owner adds once (Settings > Secrets and variables > Actions): secrets `DAGSHUB_USER`, `DAGSHUB_TOKEN` (DVC and MLflow), `RENDER_DEPLOY_HOOK` (Render > service > Settings > Deploy Hook) and variable `RENDER_URL` (`https://<service>.onrender.com`). The Render service is an image-backed web service that pulls `ghcr.io/<owner>/<repo>:<tag>`.
 
 ## 8. Configuration
 
@@ -255,7 +256,7 @@ Settings the repo owner adds once (Settings > Secrets and variables > Actions): 
 | `split` | Test and validation shares of the whole dataset, seed, stratification | 0.15, 0.15, 42, off |
 | `model_params` | `RandomForestRegressor` settings | `n_estimators` 200, `max_depth` none, `max_features` 0.5, `min_samples_leaf` 5 |
 | `quality_gate` | Release limit per metric (lower is better) | `mape: 0.18` |
-| `tracking` | W&B mode, project, entity, model artifact name and the alias of the released model | `online`, `shipping-cost`, default entity, `shipping_cost_model`, `prod` |
+| `tracking` | Tracking mode, MLflow server, experiment, registered model name and the alias of the released model | `online`, the DagsHub repo's MLflow, `shipping-cost`, `shipping_cost_model`, `prod` |
 
 **Release rule** (the same in section 1, `TEAM_BRIEF.md`, `config.yaml` and `check_quality_gate` in `src/main.py`): the model that predicts `cost_usd` is released only if `mape` on the validation split is at most 0.18 (18%). `mae` is reported on every run but does not block the release.
 
@@ -315,7 +316,7 @@ Settings the repo owner adds once (Settings > Secrets and variables > Actions): 
 │   ├── utils.py              # shared read and write helpers
 │   ├── config.py             # load_config: config.yaml -> SETTINGS
 │   ├── logger.py             # setup_logging: console + logs/pipeline.log
-│   ├── tracking.py           # W&B run, metrics and prod model (called by main)
+│   ├── tracking.py           # MLflow run, metrics and prod model (called by main)
 │   ├── api.py                # FastAPI: GET /health, POST /predict, /docs
 │   └── main.py               # 0. orchestrator: python -m src.main
 ├── data/
@@ -326,7 +327,7 @@ Settings the repo owner adds once (Settings > Secrets and variables > Actions): 
 ├── reports/                  # predictions.csv (generated, not in Git)
 ├── logs/                     # pipeline.log (generated, not in Git)
 ├── scripts/
-│   ├── fetch_prod_model.py   # download the W&B prod model and its lineage (python -m scripts.fetch_prod_model)
+│   ├── fetch_prod_model.py   # download the MLflow prod model and its lineage (python -m scripts.fetch_prod_model)
 │   └── smoke_test.py         # check a running API: python scripts/smoke_test.py --url <url>
 └── tests/                    # test_<module>.py per module: unit and integration tests
 ```
@@ -359,7 +360,7 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 | Metrics (2026-11-20) | Validation `mape` 16.5%, `mae` 274 USD; test `mape` 16.0%, `mae` 215 USD; no-ML table: validation `mape` 56.0% (section 1) |
 | Valid range | The rules in `config.yaml` (`validation`): known modes and cargo types, distance 50 to 12,000 km, weight 10 to 9,900 kg, volume 0.028 to 93.213 m3, month 1 to 12. Shipments outside them get `422` and go to Pricing by hand |
 | Limits | Least accurate on the most expensive quarter of shipments (above about 830 USD): validation `mape` 20.7% against about 15% for the other three quarters, so Pricing confirms those estimates with the carrier first; trained on one synthetic year, so seasonality and fuel prices beyond it are not learned; assumes declared weight and volume are the real ones |
-| Trace a prediction | `GET /health` of the live service: release `version`, W&B model version and run, Git commit and data md5 of the served model |
+| Trace a prediction | `GET /health` of the live service: release `version`, registered model version and MLflow run, Git commit and data md5 of the served model |
 | Owner | Business Analytics retrains weekly and monitors; IT runs the infrastructure |
 
 ## 12. Changelog
@@ -370,7 +371,7 @@ One entry per release tag; the notes of each GitHub Release copy its entry.
 - Settings in `config.yaml` read by `src/config.py`; one logger to the console and `logs/pipeline.log`
 - Data versioned with DVC: pointers and `dvc.lock` in Git, data on DagsHub; `dvc repro` runs `python -m src.main`
 - Quality gate enforced: `mape` at most 0.18 on validation, older outputs removed, failures logged
-- W&B runs per pipeline run; the model that passes the gate is registered as `shipping_cost_model:prod`
+- MLflow runs on DagsHub per pipeline run; the model that passes the gate is registered as `shipping_cost_model` with alias `prod`
 - FastAPI service (`/health`, `/predict`, `/docs`) in a Docker image built from `conda-lock.yml`
 - CI on every pull request: flake8, tests at 90% branch coverage, pipeline with the gate, Docker build
 - Release and deploy to Render from GitHub Releases, smoke test, rollback by tag

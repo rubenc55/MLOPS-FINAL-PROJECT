@@ -3,7 +3,7 @@
 # Runs      on every pull request into dev or main, on every push to them, and from deploy.yml (workflow_call)
 # Jobs      lint, test, pipeline (dvc pull + dvc repro, quality gate), docker (build and answer /health, /predict)
 # Blocks    with branch protection on dev and main, a red job blocks the merge
-# Secrets   DAGSHUB_USER, DAGSHUB_TOKEN (dvc pull), WANDB_API_KEY (only on main: prod moves only from main)
+# Secrets   DAGSHUB_USER, DAGSHUB_TOKEN: dvc pull, and MLflow on DagsHub only on main (prod moves only from main)
 # Packages  the exact versions in conda-lock.yml, the same as Docker
 
 name: CI
@@ -57,7 +57,9 @@ jobs:
     name: pipeline (dvc repro, quality gate)
     runs-on: ubuntu-latest
     env:
-      WANDB_API_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.WANDB_API_KEY || '' }}
+      # MLflow credentials only on pushes to main: a pull request never registers a model or moves prod
+      MLFLOW_TRACKING_USERNAME: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.DAGSHUB_USER || '' }}
+      MLFLOW_TRACKING_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.DAGSHUB_TOKEN || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: mamba-org/setup-micromamba@v3

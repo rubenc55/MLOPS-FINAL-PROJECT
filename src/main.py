@@ -1,10 +1,10 @@
 """Run the whole shipping cost pipeline with one command: python -m src.main
 
 Inputs: SETTINGS from src/config.py (config.yaml: paths, columns, rules, split, model parameters,
-quality gate, logging, tracking); WANDB_API_KEY from .env.
+quality gate, logging, tracking); MLflow credentials from .env.
 Outputs: the clean training table, the model (only if the quality gate passes), the
 predictions and the run log (logs/pipeline.log), written to the paths set in config.yaml;
-one W&B run per pipeline run and, after the gate passes, the model registered as prod.
+one MLflow run per pipeline run and, after the gate passes, the model registered as prod.
 Used by: the team, CI and the stage 3 API;
 it is the only place where the modules are wired together.
 Why: one entry point and one source of settings, so every run follows the same steps.
@@ -86,7 +86,7 @@ def _train_and_release(settings: dict, run) -> tuple:
     """Train on the train split, release the model only if the validation gate passes, then save it.
 
     Inputs: SETTINGS (paths, problem, features, validation, split, model_params, quality_gate, baseline)
-    and the W&B run, which receives the validation, baseline and test metrics.
+    and the MLflow run, which receives the validation, baseline and test metrics.
     Outputs: (fitted Pipeline, validation metrics, test metrics).
     Why: one place wires load, clean, validate, save the clean table, split, recipe, fit, gate
     and save, in the agreed order.
@@ -114,7 +114,7 @@ def _train_and_release(settings: dict, run) -> tuple:
         model_params=settings["model_params"], random_state=settings["split"]["random_state"],
     )
 
-    # 4. Quality gate on validation: metrics go to W&B first, so a failed run still shows them;
+    # 4. Quality gate on validation: metrics go to MLflow first, so a failed run still shows them;
     #    if the gate fails, the error stops here and nothing is saved
     val_metrics = evaluate_model(model, x_val, y_val, problem["problem_type"])
     log_metrics(run, val_metrics, "val")
@@ -184,7 +184,7 @@ def run_pipeline(settings: dict) -> dict[str, float]:
     Inputs: a settings dict shaped like SETTINGS (tests pass a copy with temporary paths).
     Outputs: validation metrics of the released model.
     Why: settings as a parameter lets tests run the whole pipeline without touching real folders;
-    main owns the W&B run: it records the data hash and commit, registers the model as prod only
+    main owns the MLflow run: it records the data hash and commit, registers the model as prod only
     after the gate and the predictions succeed, and closes the run as failed on any error.
     """
     logger.info("Starting the shipping cost pipeline")
@@ -213,8 +213,8 @@ def run_pipeline(settings: dict) -> dict[str, float]:
 def main() -> None:
     """Entry point for python -m src.main: run the pipeline with the project SETTINGS.
 
-    Inputs: none (uses SETTINGS; secrets such as WANDB_API_KEY from .env).
-    Outputs: model, predictions and log files on disk; the W&B run.
+    Inputs: none (uses SETTINGS; secrets such as MLFLOW_TRACKING_PASSWORD from .env).
+    Outputs: model, predictions and log files on disk; the MLflow run.
     Why: one command for the team, CI and later the stage 3 API.
     """
     # Secrets come from .env (ignored by Git); variables already set, as in CI, are kept

@@ -102,9 +102,9 @@ def health() -> dict:
     """Report that the service is up, which release it runs and where its model comes from.
 
     Inputs: none. Outputs: {"status": "ok", "version": release tag, "model": file name,
-    "model_info": W&B version, run, git commit, data md5 and metrics of the prod model ({} if unknown)}.
+    "model_info": model version, MLflow run, git commit, data md5 and metrics of the prod model ({} if unknown)}.
     Why: Render and the smoke test check this first; it also traces every live prediction to its
-    release, W&B run, data version and commit.
+    release, MLflow run, data version and commit.
     """
     return {
         "status": "ok", "version": APP_VERSION, "model": SETTINGS["paths"]["model"].name,
