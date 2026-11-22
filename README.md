@@ -208,7 +208,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 | `pipeline (dvc repro, quality gate)` | `dvc pull`, then `dvc status` must be clean, then `dvc repro --force` | `dvc.lock` is stale, data validation fails or the gate is not met |
 | `docker (build, /health, /predict)` | `docker build -t api .` with the model of the pipeline job, then calls the running container | the image does not build, or `/health`, `/predict` or the 422 check fail |
 
-With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. The pipeline job needs the GitHub Secrets `DAGSHUB_USER` and `DAGSHUB_TOKEN` for `dvc pull`. It gets the MLflow credentials (the same DagsHub secrets) only on pushes to `main`, so a pull request never registers a model or moves `prod`; the run log is kept as the `pipeline-log` artifact of each run.
+With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. For `dvc pull` the pipeline job reads two repository settings, `DAGSHUB_USER` and `DAGSHUB_TOKEN`; on pushes to `main` only, it also hands them to MLflow, so a pull request never registers a model or moves `prod`. The run log is kept as the `pipeline-log` artifact of each run.
 
 ## 7. Release, deploy and roll back
 
