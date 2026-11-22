@@ -50,3 +50,6 @@ data/processed/*.csv
 models/*.joblib
 reports/*.csv
 logs/
+
+# Local files written by W&B on every run (the run itself lives in W&B)
+wandb/

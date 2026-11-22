@@ -13,9 +13,9 @@ stages:
       size: 243653
     - path: src
       hash: md5
-      md5: c99b29800c1eace455879962b4937967.dir
-      size: 32682
-      nfiles: 12
+      md5: a8f3fa7f1f9cb01d188462721f100182.dir
+      size: 39249
+      nfiles: 13
     params:
       config.yaml:
         features:
@@ -54,6 +54,12 @@ stages:
           val_size: 0.15
           random_state: 42
           stratify: false
+        tracking:
+          mode: online
+          project: shipping-cost
+          entity:
+          model_name: shipping_cost_model
+          prod_alias: prod
         validation:
           allowed_values:
             transport_mode:
@@ -87,8 +93,8 @@ stages:
       size: 243653
     - path: logs/pipeline.log
       hash: md5
-      md5: 14dca0f44cf5362ee8db459397fe549a
-      size: 2832
+      md5: 0e0b7f58699fdb13f57873885f47ab6e
+      size: 3260
     - path: models/model.joblib
       hash: md5
       md5: e2286c980eacabe8c7c12c0190e2041e

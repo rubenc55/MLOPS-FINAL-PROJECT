@@ -21,7 +21,7 @@
 - features.py signature: get_feature_preprocessor(categorical_columns, numeric_columns), settings per group: none
 - Agreed extra parameters: validate_dataframe(allowed_values=None, numeric_ranges=None)
 - utils.py helpers: load_csv, save_csv, save_model, load_model
-- Environment: no packages beyond pandas, numpy, scikit-learn, joblib, pyyaml (reads config.yaml), pytest, pytest-cov, flake8 (confirm in item 4)
+- Environment: no packages beyond pandas, numpy, scikit-learn, joblib, pyyaml (reads config.yaml), wandb (tracking), python-dotenv (reads .env), pytest, pytest-cov, flake8, dvc (data versioning)
 
 ## Decisions and owners
 - Decisions: quality gate -> mape <= 0.18 on validation; mae reported, not gated (2026-11-09, README release rule)
@@ -31,6 +31,7 @@
 - Decisions: raw data -> sheet "data" exported once to data/raw/shipments.csv, never committed (README check, row 5)
 - Decisions: unknown categories -> validate rejects them first; OneHotEncoder ignores them as a safety net
 - Decisions: failed gate -> every run deletes the previous model and predictions first; a failed gate is logged as ERROR and saves nothing (README section 4)
+- Decisions: tracking -> main.py owns one W&B run per pipeline run; only a model that passes the gate and writes predictions is logged as artifact shipping_cost_model with alias prod (README section 4)
 - Decisions: data versioning -> DVC pointers (*.csv.dvc) and dvc.lock in Git, CSV files and model on DagsHub; dvc repro runs python -m src.main (README sections 3 and 4)
 - Decisions: new_shipments.csv -> stand-in of the first 20 shipments without cost_usd until the TMS export exists
 - Owners (team): utils -> Ruben Cuellar (@rubenc55), branch feature/utils
