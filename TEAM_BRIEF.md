@@ -21,7 +21,7 @@
 - features.py signature: get_feature_preprocessor(categorical_columns, numeric_columns), settings per group: none
 - Agreed extra parameters: validate_dataframe(allowed_values=None, numeric_ranges=None)
 - utils.py helpers: load_csv, save_csv, save_model, load_model
-- Environment: no packages beyond pandas, numpy, scikit-learn, joblib, pyyaml (reads config.yaml), wandb (tracking), python-dotenv (reads .env), pytest, pytest-cov, flake8, dvc (data versioning)
+- Environment: no packages beyond pandas, numpy, scikit-learn, joblib, pyyaml (reads config.yaml), mlflow-skinny (tracking), python-dotenv (reads .env), pytest, pytest-cov, flake8, dvc (data versioning)
 
 ## Decisions and owners
 - Decisions: quality gate -> mape <= 0.18 on validation; mae reported, not gated (2026-11-09, README release rule)
@@ -31,9 +31,9 @@
 - Decisions: raw data -> sheet "data" exported once to data/raw/shipments.csv, never committed (README check, row 5)
 - Decisions: unknown categories -> validate rejects them first; OneHotEncoder ignores them as a safety net
 - Decisions: failed gate -> every run deletes the previous model and predictions first; a failed gate is logged as ERROR and saves nothing (README section 4)
-- Decisions: tracking -> main.py owns one W&B run per pipeline run; only a model that passes the gate and writes predictions is logged as artifact shipping_cost_model with alias prod (README section 4)
-- Decisions: CI -> ci.yml runs lint, test (90% branch floor), pipeline (dvc pull, stale check, dvc repro) and docker on every pull request into dev or main; W&B registers prod only on pushes to main (README section 6)
-- Decisions: release -> a GitHub Release from main runs deploy.yml: release guard, CI on the tag, image with the W&B prod model, smoke test, push to ghcr.io, Render deploy hook, live smoke test; rollback redeploys the image of an older tag (README section 7)
+- Decisions: tracking -> MLflow on the project's DagsHub repo instead of W&B (W&B sign-ups paused, course announcement 2026-11-22); main.py owns one MLflow run per pipeline run; only a model that passes the gate and writes predictions is registered as shipping_cost_model with alias prod (README section 4)
+- Decisions: CI -> ci.yml runs lint, test (90% branch floor), pipeline (dvc pull, stale check, dvc repro) and docker on every pull request into dev or main; MLflow registers prod only on pushes to main (README section 6)
+- Decisions: release -> a GitHub Release from main runs deploy.yml: release guard, CI on the tag, image with the MLflow prod model, smoke test, push to ghcr.io, Render deploy hook, live smoke test; rollback redeploys the image of an older tag (README section 7)
 - Decisions: baseline -> no-ML table = median train cost per transport mode, scored on validation in every run (mape 0.560 vs model 0.165 on 2026-11-20); reported, not gated (README section 1)
 - Decisions: data versioning -> DVC pointers (*.csv.dvc) and dvc.lock in Git, CSV files and model on DagsHub; dvc repro runs python -m src.main; logs/pipeline.log is not a DVC output (README sections 3 and 4)
 - Decisions: new_shipments.csv -> stand-in of the first 20 shipments without cost_usd until the TMS export exists

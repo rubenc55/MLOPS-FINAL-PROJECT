@@ -1,11 +1,11 @@
 # deploy.yml  [Continuous deployment: a published release goes live on Render]
 # -------------------------------------------------------------------
 # Release   publish a GitHub Release from main (tag vX.Y.Z): guard -> CI on the tag -> image with the
-#           W&B prod model -> smoke test of the image -> push to ghcr.io -> Render deploys that tag ->
+#           MLflow prod model -> smoke test of the image -> push to ghcr.io -> Render deploys that tag ->
 #           smoke test of the live URL until /health reports the new tag
 # Rollback  Actions > Deploy > Run workflow, tag of an older release: guard -> Render deploys the image
 #           already built for that tag (it passed CI when it was released) -> live smoke test
-# Secrets   WANDB_API_KEY, DAGSHUB_USER, DAGSHUB_TOKEN (CI), RENDER_DEPLOY_HOOK; variable RENDER_URL
+# Secrets   DAGSHUB_USER, DAGSHUB_TOKEN (CI, MLflow), RENDER_DEPLOY_HOOK; variable RENDER_URL
 # Image     ghcr.io/<owner>/<repo>:<tag>, one per release, so any release can be redeployed
 
 name: Deploy
@@ -58,9 +58,10 @@ jobs:
           environment-file: conda-lock.yml
           environment-name: shipping-cost
           cache-environment: true
-      - name: Download the W&B prod model and its lineage
+      - name: Download the MLflow prod model and its lineage
         env:
-          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USER }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
         run: python -m scripts.fetch_prod_model
       - name: docker build, tagged with the release
         run: |

@@ -69,11 +69,11 @@ quality_gate:
 baseline:
   group_column: transport_mode
 
-# Experiment tracking and model registry in W&B (Weights & Biases, now CoreWeave Forge), driven by main.py.
-# The API key is a secret: WANDB_API_KEY in .env (see .env.example), never here
+# Experiment tracking and model registry: MLflow on the project's DagsHub repo, driven by main.py.
+# Credentials are secrets: MLFLOW_TRACKING_USERNAME and MLFLOW_TRACKING_PASSWORD in .env (see .env.example)
 tracking:
-  mode: online                    # online | offline | disabled; online without WANDB_API_KEY runs as disabled
-  project: shipping-cost
-  entity: null                    # W&B user or team; null uses the default of the API key
-  model_name: shipping_cost_model # model artifact name; one version per model that passes the gate
+  mode: online                    # online | disabled; online without MLFLOW_TRACKING_PASSWORD runs as disabled
+  tracking_uri: https://dagshub.com/jyothikasurya2002/MLOPS-FINAL-PROJECT.mlflow
+  experiment: shipping-cost
+  model_name: shipping_cost_model # registered model; one version per model that passes the gate
   prod_alias: prod                # moved to every model that passes the gate; the API and deploy load this one

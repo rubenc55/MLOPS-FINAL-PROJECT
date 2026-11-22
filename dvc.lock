@@ -13,8 +13,8 @@ stages:
       size: 243653
     - path: src
       hash: md5
-      md5: 2013a4477645967bac9f0e52a0236616.dir
-      size: 48537
+      md5: 884a4223cfe27e1a285235676c92857b.dir
+      size: 50810
       nfiles: 14
     params:
       config.yaml:
@@ -59,8 +59,9 @@ stages:
           stratify: false
         tracking:
           mode: online
-          project: shipping-cost
-          entity:
+          tracking_uri: 
+            https://dagshub.com/jyothikasurya2002/MLOPS-FINAL-PROJECT.mlflow
+          experiment: shipping-cost
           model_name: shipping_cost_model
           prod_alias: prod
         validation:

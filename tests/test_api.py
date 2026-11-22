@@ -65,10 +65,11 @@ def test_unit_health_reports_ok_and_model(client):
 
 
 def test_integration_health_shows_release_and_lineage(client, monkeypatch):
-    """With the lineage file of the prod model, /health traces the service to its W&B run, data and commit."""
+    """With the lineage file of the prod model, /health traces the service to its MLflow run, data and commit."""
     _, model = client
     settings = api.SETTINGS
-    info = {"version": "v3", "wandb_run": "team/shipping-cost/abc123", "git_commit": "def456", "data_md5": "4db8"}
+    info = {"model": "shipping_cost_model@prod", "version": "3", "run_id": "abc123", "git_commit": "def456",
+            "data_md5": "4db8"}
     settings["paths"]["model_info"].write_text(json.dumps(info), encoding="utf-8")
     monkeypatch.setattr(api, "APP_VERSION", "v1.2.0")
 

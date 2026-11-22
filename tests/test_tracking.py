@@ -1,53 +1,36 @@
-"""Tests for src/tracking.py: W&B runs, the prod model and lineage, without an account or internet."""
+"""Tests for src/tracking.py: MLflow runs, the prod model and lineage on a local MLflow store (no DagsHub)."""
 
 import hashlib
 import json
 import subprocess
-from pathlib import Path
 
+import mlflow
 import pytest
+from mlflow import MlflowClient
+from mlflow.exceptions import MlflowException
 
 from src import tracking
 
-TRACKING = {
-    "mode": "online", "project": "shipping-cost", "entity": None,
-    "model_name": "shipping_cost_model", "prod_alias": "prod",
-}
-
-
-class FakeRun:
-    """Stand-in for a W&B run that records what it receives."""
-
-    def __init__(self, **init_kwargs):
-        self.init_kwargs, self.logged, self.artifacts, self.summary = init_kwargs, [], [], {}
-        self.id, self.url, self.exit_code = "run123", None, None
-        self.disabled = init_kwargs.get("mode") == "disabled"
-
-    def log(self, values):
-        self.logged.append(values)
-
-    def log_artifact(self, artifact, aliases):
-        self.artifacts.append((artifact, aliases))
-
-    def finish(self, exit_code):
-        self.exit_code = exit_code
-
-
-class FakeArtifact:
-    """Stand-in for wandb.Artifact that records its files."""
-
-    def __init__(self, name, type, metadata):  # pylint: disable=redefined-builtin
-        self.name, self.type, self.metadata, self.files = name, type, metadata, []
-
-    def add_file(self, path):
-        self.files.append(path)
-
 
 @pytest.fixture
-def fake_wandb(monkeypatch):
-    """Replace wandb.init and wandb.Artifact inside src.tracking with the fakes above."""
-    monkeypatch.setattr(tracking.wandb, "init", lambda **kwargs: FakeRun(**kwargs))
-    monkeypatch.setattr(tracking.wandb, "Artifact", FakeArtifact)
+def local_mlflow(tmp_path, monkeypatch):
+    """Tracking settings that point MLflow at a store in tmp_path, with a stand-in token so tracking is online."""
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")  # the local folder store is only for these tests
+    monkeypatch.setenv("MLFLOW_TRACKING_PASSWORD", "local-test")
+    settings = {
+        "mode": "online", "tracking_uri": (tmp_path / "mlruns").as_uri(), "experiment": "shipping-cost-test",
+        "model_name": "shipping_cost_model", "prod_alias": "prod",
+    }
+    yield settings
+    mlflow.end_run()
+
+
+def _model_file(tmp_path, content: bytes = b"released model"):
+    """Write a stand-in model file named like the real one."""
+    path = tmp_path / "models" / "model.joblib"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
 
 
 def test_unit_file_md5_matches_hashlib(tmp_path):
@@ -94,173 +77,125 @@ def test_unit_git_commit_without_git_returns_unknown(monkeypatch):
     assert tracking.git_commit() == "unknown"
 
 
-def test_unit_start_run_online_with_key(fake_wandb, monkeypatch):
-    """With WANDB_API_KEY set, the run starts online in the configured project with the run config."""
-    monkeypatch.setenv("WANDB_API_KEY", "not-a-real-key")
-
-    run = tracking.start_run(TRACKING, {"git_commit": "abc123"})
-
-    assert run.init_kwargs == {
-        "project": "shipping-cost", "entity": None, "job_type": "train",
-        "config": {"git_commit": "abc123"}, "mode": "online",
-    }
-
-
-def test_unit_start_run_without_key_is_disabled(fake_wandb, monkeypatch, caplog):
-    """Online without WANDB_API_KEY does not stop the pipeline: tracking is disabled, with a warning."""
-    monkeypatch.delenv("WANDB_API_KEY", raising=False)
-
-    run = tracking.start_run(TRACKING, {})
-
-    assert run.init_kwargs["mode"] == "disabled"
-    assert "WANDB_API_KEY is not set" in caplog.text
-
-
-def test_unit_start_run_unknown_mode_raises(fake_wandb):
+def test_unit_start_run_unknown_mode_raises():
     """A typo in tracking.mode stops the run with a clear error that lists the allowed modes."""
     with pytest.raises(ValueError, match="Unknown tracking mode: 'onlin'"):
-        tracking.start_run({**TRACKING, "mode": "onlin"}, {})
+        tracking.start_run({"mode": "onlin"}, {})
 
 
-def test_unit_log_metrics_prefixes_split():
-    """Metrics are logged with the split as prefix, so validation and test values stay apart."""
-    run = FakeRun()
+def test_unit_start_run_without_token_is_disabled(monkeypatch, caplog):
+    """Online without MLFLOW_TRACKING_PASSWORD does not stop the pipeline: tracking is off, with a warning."""
+    monkeypatch.delenv("MLFLOW_TRACKING_PASSWORD", raising=False)
 
-    tracking.log_metrics(run, {"mae": 274.5, "mape": 0.165}, "val")
-
-    assert run.logged == [{"val_mae": 274.5, "val_mape": 0.165}]
-
-
-def test_unit_log_model_uploads_file_with_prod_alias(fake_wandb, tmp_path):
-    """The model file becomes a 'model' artifact with its metadata, aliased latest and prod."""
-    model_path = tmp_path / "model.joblib"
-    model_path.write_bytes(b"model")
-    run = FakeRun()
-
-    tracking.log_model(run, model_path, TRACKING, {"data_md5": "d41d8", "git_commit": "abc123"})
-
-    artifact, aliases = run.artifacts[0]
-    assert (artifact.name, artifact.type, artifact.files) == ("shipping_cost_model", "model", [str(model_path)])
-    assert artifact.metadata == {"data_md5": "d41d8", "git_commit": "abc123"}
-    assert aliases == ["latest", "prod"]
+    assert tracking.start_run({"mode": "online"}, {}) is None
+    assert "MLFLOW_TRACKING_PASSWORD is not set" in caplog.text
 
 
-def test_unit_log_model_disabled_run_registers_nothing(fake_wandb, tmp_path, caplog):
-    """With tracking disabled, nothing is uploaded and the log says so instead of claiming a prod model."""
-    run = FakeRun(mode="disabled")
+def test_unit_start_run_disabled_mode():
+    """mode: disabled never contacts the tracking server."""
+    assert tracking.start_run({"mode": "disabled"}, {}) is None
 
-    tracking.log_model(run, tmp_path / "model.joblib", TRACKING, {})
 
-    assert run.artifacts == []
+def test_integration_start_run_records_settings_and_lineage(local_mlflow):
+    """The run gets the data hash and commit as tags, the settings as flat parameters and as run_config.json."""
+    run_config = {"split": {"random_state": 42}, "quality_gate": {"mape": 0.18}, "paths": {"model": "m.joblib"},
+                  "data_md5": "4db8", "git_commit": "abc123"}
+
+    run = tracking.start_run(local_mlflow, run_config)
+    tracking.end_run(run)
+
+    stored = MlflowClient().get_run(run.info.run_id)
+    assert stored.data.tags["data_md5"] == "4db8" and stored.data.tags["git_commit"] == "abc123"
+    assert stored.data.params == {"split.random_state": "42", "quality_gate.mape": "0.18"}
+    assert mlflow.artifacts.load_dict(f"{run.info.artifact_uri}/run_config.json") == run_config
+
+
+def test_integration_log_metrics_and_end_run(local_mlflow):
+    """Metrics are logged with the split as prefix; a finished run ends FINISHED, a failed one FAILED with its error."""
+    ok_run = tracking.start_run(local_mlflow, {})
+    tracking.log_metrics(ok_run, {"mae": 274.5, "mape": 0.165}, "val")
+    tracking.end_run(ok_run)
+    failed_run = tracking.start_run(local_mlflow, {})
+    tracking.end_run(failed_run, ValueError("Model not released, quality gate failed: mape = 0.2 > 0.18"))
+
+    client = MlflowClient()
+    ok, failed = client.get_run(ok_run.info.run_id), client.get_run(failed_run.info.run_id)
+    assert ok.data.metrics == {"val_mae": 274.5, "val_mape": 0.165} and ok.info.status == "FINISHED"
+    assert failed.info.status == "FAILED" and failed.data.tags["error"].startswith("Model not released")
+
+
+def test_unit_disabled_run_logs_and_registers_nothing(tmp_path, caplog):
+    """With tracking off (run None) metrics and end are skipped, and the log says the model is not registered."""
+    tracking.log_metrics(None, {"mape": 0.1}, "val")
+    tracking.log_model(None, tmp_path / "model.joblib", {}, {})
+    tracking.end_run(None)
+
     assert "model is not registered" in caplog.text
 
 
-def test_unit_end_run_success_and_failure():
-    """A finished run exits with 0; a failed one exits with 1 and keeps the error message in its summary."""
-    ok_run, failed_run = FakeRun(), FakeRun()
+def test_integration_log_model_registers_versions_and_moves_prod(local_mlflow, tmp_path):
+    """Each released model becomes a new version with its lineage tags, and prod moves to the newest one."""
+    model_path = _model_file(tmp_path)
+    for _ in range(2):
+        run = tracking.start_run(local_mlflow, {})
+        tracking.log_model(run, model_path, local_mlflow, {"data_md5": "4db8", "git_commit": "abc123"})
+        tracking.end_run(run)
 
-    tracking.end_run(ok_run)
-    tracking.end_run(failed_run, ValueError("Model not released, quality gate failed: mape = 0.2 > 0.18"))
-
-    assert (ok_run.exit_code, ok_run.summary) == (0, {})
-    assert failed_run.exit_code == 1
-    assert failed_run.summary["error"].startswith("Model not released")
+    prod = MlflowClient().get_model_version_by_alias("shipping_cost_model", "prod")
+    assert str(prod.version) == "2" and prod.run_id == run.info.run_id
+    assert prod.tags == {"data_md5": "4db8", "git_commit": "abc123"}
 
 
-def test_integration_real_wandb_disabled_mode(tmp_path, monkeypatch):
-    """With the real wandb library in disabled mode, a full run (metrics, model, finish) works offline."""
-    monkeypatch.chdir(tmp_path)
-    model_path = tmp_path / "model.joblib"
-    model_path.write_bytes(b"model")
+def test_unit_log_model_reraises_unexpected_registry_errors(local_mlflow, tmp_path, monkeypatch):
+    """A registry error other than 'model does not exist' (e.g. no permission) stops the release instead of hiding."""
+    class DeniedClient:
+        def get_registered_model(self, name):
+            raise MlflowException("permission denied", error_code="PERMISSION_DENIED")
 
-    run = tracking.start_run({**TRACKING, "mode": "disabled"}, {"git_commit": "abc123"})
+    monkeypatch.setattr(tracking, "MlflowClient", DeniedClient)
+    run = tracking.start_run(local_mlflow, {})
+
+    with pytest.raises(MlflowException, match="permission denied"):
+        tracking.log_model(run, _model_file(tmp_path), local_mlflow, {})
+
+
+def test_integration_fetch_prod_model_replaces_model_and_writes_lineage(local_mlflow, tmp_path):
+    """The prod model replaces an older local file, and its lineage (version, run, commit, data, metrics) is saved."""
+    released = _model_file(tmp_path / "release", b"prod model")
+    run = tracking.start_run(local_mlflow, {"data_md5": "4db8", "git_commit": "abc123"})
     tracking.log_metrics(run, {"mape": 0.165}, "val")
-    tracking.log_model(run, model_path, TRACKING, {"git_commit": "abc123"})
+    tracking.log_model(run, released, local_mlflow, {"data_md5": "4db8", "git_commit": "abc123"})
     tracking.end_run(run)
+    model_path = _model_file(tmp_path / "serve", b"older local model")
+    info_path = model_path.parent / "model_info.json"
 
-    assert not (tmp_path / "wandb").exists()
+    info = tracking.fetch_prod_model(local_mlflow, model_path, info_path)
 
-
-class FakeLoggedRun:
-    """Stand-in for the W&B run that logged an artifact."""
-
-    path = ["team", "shipping-cost", "run123"]
-
-
-class FakeRegistryArtifact:
-    """Stand-in for a downloaded registry artifact that holds one file."""
-
-    qualified_name, version, aliases = "team/shipping-cost/shipping_cost_model:v3", "v3", ["latest", "prod"]
-    metadata = {"git_commit": "abc123", "data_md5": "4db8", "val_metrics": {"mape": 0.165}}
-
-    def __init__(self, file_name, run):
-        self.file_name, self.run = file_name, run
-
-    def download(self, root):
-        (Path(root) / self.file_name).write_bytes(b"prod model")
-        return root
-
-    def logged_by(self):
-        return self.run
-
-
-@pytest.fixture
-def fake_registry(monkeypatch):
-    """Replace wandb.Api so artifact(name) returns a fake artifact and records the requested name."""
-    requested = {}
-
-    def install(file_name="model.joblib", run=FakeLoggedRun()):
-        class FakeApi:
-            def artifact(self, name, type):  # pylint: disable=redefined-builtin
-                requested.update(name=name, type=type)
-                return FakeRegistryArtifact(file_name, run)
-
-        monkeypatch.setattr(tracking.wandb, "Api", FakeApi)
-        return requested
-
-    return install
-
-
-def test_unit_fetch_prod_model_replaces_model_and_writes_lineage(fake_registry, tmp_path, monkeypatch):
-    """The prod model replaces any older file, and its lineage (version, run, commit, data) is written next to it."""
-    monkeypatch.setenv("WANDB_API_KEY", "not-a-real-key")
-    requested = fake_registry()
-    model_path, info_path = tmp_path / "models" / "model.joblib", tmp_path / "models" / "model_info.json"
-    model_path.parent.mkdir()
-    model_path.write_bytes(b"older local model")
-
-    info = tracking.fetch_prod_model(TRACKING, model_path, info_path)
-
-    assert requested == {"name": "shipping-cost/shipping_cost_model:prod", "type": "model"}
     assert model_path.read_bytes() == b"prod model"
-    assert info["version"] == "v3" and info["wandb_run"] == "team/shipping-cost/run123"
-    assert info["git_commit"] == "abc123" and info["data_md5"] == "4db8"
+    assert info == {"model": "shipping_cost_model@prod", "version": "1", "run_id": run.info.run_id,
+                    "git_commit": "abc123", "data_md5": "4db8", "metrics": {"val_mape": 0.165}}
     assert json.loads(info_path.read_text(encoding="utf-8")) == info
 
 
-def test_unit_fetch_prod_model_uses_entity_and_handles_unknown_run(fake_registry, tmp_path, monkeypatch):
-    """With an entity in config.yaml the name starts with it; an artifact without a logging run keeps wandb_run None."""
-    monkeypatch.setenv("WANDB_API_KEY", "not-a-real-key")
-    requested = fake_registry(run=None)
+def test_unit_fetch_prod_model_without_token_raises(monkeypatch, tmp_path):
+    """Without MLFLOW_TRACKING_PASSWORD the deploy stops with a clear message instead of shipping an unknown model."""
+    monkeypatch.delenv("MLFLOW_TRACKING_PASSWORD", raising=False)
 
-    info = tracking.fetch_prod_model({**TRACKING, "entity": "team"}, tmp_path / "model.joblib", tmp_path / "info.json")
-
-    assert requested["name"] == "team/shipping-cost/shipping_cost_model:prod"
-    assert info["wandb_run"] is None
+    with pytest.raises(RuntimeError, match="MLFLOW_TRACKING_PASSWORD is not set"):
+        tracking.fetch_prod_model({}, tmp_path / "model.joblib", tmp_path / "info.json")
 
 
-def test_unit_fetch_prod_model_without_key_raises(monkeypatch, tmp_path):
-    """Without WANDB_API_KEY the deploy stops with a clear message instead of shipping an unknown model."""
-    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+def test_integration_fetch_prod_model_wrong_file_raises(local_mlflow, tmp_path):
+    """A prod version without the expected file name stops the deploy and names the missing file."""
+    run = tracking.start_run(local_mlflow, {})
+    tracking.log_model(run, _model_file(tmp_path), local_mlflow, {})
+    tracking.end_run(run)
 
-    with pytest.raises(RuntimeError, match="WANDB_API_KEY is not set"):
-        tracking.fetch_prod_model(TRACKING, tmp_path / "model.joblib", tmp_path / "info.json")
+    with pytest.raises(FileNotFoundError, match="has no file other.joblib"):
+        tracking.fetch_prod_model(local_mlflow, tmp_path / "other.joblib", tmp_path / "info.json")
 
 
-def test_unit_fetch_prod_model_wrong_file_raises(fake_registry, tmp_path, monkeypatch):
-    """An artifact without model.joblib stops the deploy and names the missing file."""
-    monkeypatch.setenv("WANDB_API_KEY", "not-a-real-key")
-    fake_registry(file_name="other.pkl")
-
-    with pytest.raises(FileNotFoundError, match="has no file model.joblib"):
-        tracking.fetch_prod_model(TRACKING, tmp_path / "model.joblib", tmp_path / "info.json")
+def test_unit_fetch_prod_model_without_prod_alias_raises(local_mlflow, tmp_path):
+    """Before any model passed the gate there is no prod version, so the deploy stops at the registry."""
+    with pytest.raises(MlflowException):
+        tracking.fetch_prod_model(local_mlflow, tmp_path / "model.joblib", tmp_path / "info.json")
