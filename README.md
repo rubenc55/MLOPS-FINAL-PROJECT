@@ -69,7 +69,9 @@ conda env create -f environment.yml
 conda activate shipping-cost
 ```
 
-This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, wandb, python-dotenv, pytest, pytest-cov, flake8 and dvc. If you created the environment before `wandb` was added, update it with `conda env update -f environment.yml --prune`. Run every command below from the repo root with the environment active.
+For the exact versions of CI and Docker instead, install the lock: `conda-lock install -n shipping-cost conda-lock.yml`.
+
+This installs Python 3.12 with pandas, numpy, scikit-learn, joblib, pyyaml, wandb, python-dotenv, fastapi, pydantic, uvicorn, pytest, pytest-cov, flake8, dvc, httpx and conda-lock. If you created the environment before `fastapi` was added, update it with `conda env update -f environment.yml --prune`. Run every command below from the repo root with the environment active.
 
 Secrets go in a `.env` file at the repo root, which Git ignores. Copy the names from `.env.example` and fill in your own values:
 
@@ -135,7 +137,43 @@ Every run first deletes the model and predictions of the previous run. If the ga
 
 So `prod` always points to the last model that met the gate, and any prod model leads back to its run, data version and commit. Without `WANDB_API_KEY` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing.
 
-## 5. Test and check style
+## 5. Serve the API
+
+`src/api.py` serves the released model (`models/model.joblib`) over HTTP. It adds no ML logic: every request goes through the same `clean_dataframe`, `validate_dataframe` and `run_inference` as the batch run, so a live estimate equals the batch estimate for the same shipment.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /health` | `{"status": "ok", "model": "model.joblib"}` when the service is up |
+| `POST /predict` | Estimated `cost_usd` per shipment, in the request order |
+| `GET /docs` | The contract and a form to try it, with the sample below (the only UI) |
+
+Sample request, one shipment of `new_shipments.csv` (more shipments go in the same list):
+
+```json
+{"shipments": [{"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
+  "weight_kg": 1683.2, "volume_m3": 4.719, "urgent": 0, "month": 3}]}
+```
+
+Answer: `{"predictions": [{"shipment_id": 1, "prediction": 1306.97}]}` (cost in USD, same value as `reports/predictions.csv`).
+
+The request is strict (Pydantic, `extra="forbid"`): an unknown or missing field, a number sent as text, `true` for `urgent` or an empty list gets `422` before the model runs. A shipment that breaks a rule in `config.yaml` (unknown category, value out of range) also gets `422`, with the same message as the batch run. Without a model the service does not start, and the error says to run the pipeline first.
+
+Run it locally, after `dvc repro` has written the model:
+
+```bash
+uvicorn src.api:app --port 8000          # then open http://localhost:8000/docs
+```
+
+Or in Docker, the same image Render runs:
+
+```bash
+docker build -t api .
+docker run -p 8000:8000 api              # same URLs as above
+```
+
+The image installs the exact versions in `conda-lock.yml` (linux-64, the platform of CI and Render; on Apple chips Docker emulates it). `.dockerignore` is an allow-list: only `src/`, `config.yaml`, `conda-lock.yml` and `models/model.joblib` enter the build, never data, tests, notebooks, `.env` or `.git`. After any change to `environment.yml`, rewrite the lock with `conda-lock lock -f environment.yml -p linux-64 -p osx-arm64 -p osx-64 -p win-64` and commit it.
+
+## 6. Test and check style
 
 ```bash
 pytest --cov=src --cov-branch --cov-report=term-missing
@@ -145,7 +183,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 - `tests/` has one file per module (`test_<module>.py`) with unit tests and at least one integration test. `tests/test_main.py` also runs `main()` end to end on temporary files, so the real `data/`, `models/` and `reports/` folders are not touched.
 - Course gate: every test passes, none is skipped, and branch coverage is at least 90% (currently 100%). flake8 prints nothing.
 
-## 6. Configuration
+## 7. Configuration
 
 [`config.yaml`](config.yaml) is the single source of every non-secret setting. `src/config.py` reads it once with `load_config` into `SETTINGS` and turns the relative paths into absolute paths under the repo root; `src/main.py` (and later the API) imports `SETTINGS` from there. To change a setting, edit `config.yaml` and rerun; no code changes are needed. Secrets never go here: they belong in `.env`, whose names are listed in `.env.example`.
 
@@ -163,7 +201,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 
 **Release rule** (the same in section 1, `TEAM_BRIEF.md`, `config.yaml` and `check_quality_gate` in `src/main.py`): the model that predicts `cost_usd` is released only if `mape` on the validation split is at most 0.18 (18%). `mae` is reported on every run but does not block the release.
 
-## 7. Project structure
+## 8. Project structure
 
 ### The pipeline at a glance
 
@@ -189,6 +227,9 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 ├── TEAM_BRIEF.md             # team decisions and module owners
 ├── config.yaml               # every non-secret setting (paths, columns, rules, split, model, gate)
 ├── environment.yml           # conda environment: Python 3.12 and packages
+├── conda-lock.yml            # exact versions of every package (linux-64, osx-arm64, osx-64, win-64)
+├── Dockerfile                # serving image: locked packages, src/, config.yaml and the model
+├── .dockerignore             # allow-list of what the Docker build may see
 ├── dvc.yaml                  # DVC stage: python -m src.main, its inputs and outputs
 ├── dvc.lock                  # hashes of the last run (generated by dvc repro, committed)
 ├── .dvc/                     # DVC settings: config (DagsHub remote) is committed, config.local is not
@@ -213,6 +254,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 │   ├── config.py             # load_config: config.yaml -> SETTINGS
 │   ├── logger.py             # setup_logging: console + logs/pipeline.log
 │   ├── tracking.py           # W&B run, metrics and prod model (called by main)
+│   ├── api.py                # FastAPI: GET /health, POST /predict, /docs
 │   └── main.py               # 0. orchestrator: python -m src.main
 ├── data/
 │   ├── raw/                  # shipments.csv.dvc in Git; shipments.csv from dvc pull
@@ -224,7 +266,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 └── tests/                    # test_<module>.py per module: unit and integration tests
 ```
 
-## 8. Team and module owners
+## 9. Team and module owners
 
 From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors the model; IT maintains the infrastructure and the TMS.
 

@@ -1,0 +1,13 @@
+# .dockerignore  [What docker build may see: allow-list]
+# Purpose   Keep data, tests, notebooks, secrets and Git history out of the image
+# How       Ignore everything, then allow only what the Dockerfile copies
+
+*
+!src/
+!config.yaml
+!conda-lock.yml
+!models/model.joblib
+
+# Never inside the allowed folders either
+**/__pycache__
+**/*.py[cod]
