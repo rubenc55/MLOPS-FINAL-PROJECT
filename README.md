@@ -44,16 +44,17 @@ When a sales rep enters a quote request, the Pricing analyst sees the model's es
 - **Personal or sensitive data:** No. The dataset is synthetic and has no customer data.
 
 ### Value, cost and risks
-- **Benefit:** cost estimates in minutes instead of 24 to 48 h. On the same unseen shipments the model is about 3 times more accurate than a tariff table (measured 2026-11-20, train 3,500 / validation 750 / test 750 shipments):
+- **Benefit:** cost estimates in minutes instead of 24 to 48 h. On the same unseen shipments the model is about 4 times more accurate than a tariff table (measured 2026-11-23, train 3,500 / validation 750 / test 750 shipments):
 
 | Method | Validation `mape` | Validation `mae` | Test `mape` | Test `mae` |
 | --- | --- | --- | --- | --- |
 | One median cost for every shipment | 88.5% | 1,046 USD | 96.3% | 917 USD |
 | Median cost per transport mode (baseline) | 56.0% | 892 USD | 59.8% | 756 USD |
 | Rate per km by mode and cargo type, urgent premium | 69.7% | 860 USD | 63.5% | 700 USD |
-| Model (`RandomForestRegressor`) | 16.5% | 274 USD | 16.0% | 215 USD |
+| Model (`RandomForestRegressor`, `shipping_cost_model` version 5, prod from v1.1.1) | 13.0% | 213 USD | 12.6% | 178 USD |
+| Earlier model (version 3, prod up to v1.1.0) | 16.6% | 274 USD | 16.0% | 215 USD |
 
-73.5% of the model's validation estimates are within 18% of the carrier cost, against 16.9% for the per-km table.
+78.5% of the model's validation estimates are within 18% of the carrier cost (73.5% for version 3), against 16.9% for the per-km table.
 - **Rough cost (estimate):** Business Analytics team, about 8,000 USD per month in salaries for 3 months (about 24,000 USD); existing IT infrastructure; 12 weeks to production.
 - **MLOps running cost:** 0 USD per month at the current volume, on the free plans of GitHub Actions (CI and deploy), DagsHub (data, and MLflow runs and model registry) and Render (API, sleeps after 15 minutes without requests). A paid Render plan is needed only when quotes cannot wait about a minute for the service to wake up (check each provider's pricing page before scaling).
 - **When it is not worth it:** for a branch with few quotes, or if carriers publish fixed tariffs, the median table above is cheaper to run and good enough.
@@ -168,7 +169,7 @@ A run tag called prod, renaming a run or picking the newest version is not promo
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /health` | `status` ok, the release `version`, the code `git_commit` of the image, the `model_version` it serves (for example `shipping_cost_model:v3`; `local` for a model trained locally), the `model` file and `model_info`: MLflow run, training commit, data md5 and metrics of the prod model |
+| `GET /health` | `status` ok, the release `version`, the code `git_commit` of the image, the `model_version` it serves (for example `shipping_cost_model:v5`; `local` for a model trained locally), the `model` file and `model_info`: MLflow run, training commit, data md5 and metrics of the prod model |
 | `POST /predict` | Estimated `cost_usd` per shipment, in the request order |
 | `GET /docs` | The contract and a form to try it, with the sample below (the only UI) |
 
@@ -179,7 +180,7 @@ Sample request ([`scripts/sample_request.json`](scripts/sample_request.json) hol
   "weight_kg": 1683.2, "volume_m3": 4.719, "urgent": 0, "month": 3}]}
 ```
 
-Answer: `{"model_version": "shipping_cost_model:v3", "predictions": [{"shipment_id": 1, "prediction": 1308.73}]}` (cost in USD, with the version of the model that made it).
+Answer: `{"model_version": "shipping_cost_model:v5", "predictions": [{"shipment_id": 1, "prediction": 1191.43}]}` (cost in USD, with the version of the model that made it).
 
 The request is strict (Pydantic, `extra="forbid"`): an unknown or missing field, a number sent as text, `true` for `urgent` or an empty list gets `422` before the model runs. A shipment that breaks a rule in `config.yaml` (unknown category, value out of range) also gets `422`, with the same message as the batch run. Without a model the service does not start, and the error says to run the pipeline first.
 
@@ -266,7 +267,7 @@ Settings the repo owner adds once (Settings > Secrets and variables > Actions): 
 | `features` | Categorical (one-hot encoded) and numeric (passed through) columns | `transport_mode`, `cargo_type` / `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month` |
 | `validation` | Allowed categories and numeric ranges, limits included | For example `transport_mode`: Road, Sea, Air; `month`: 1 to 12 |
 | `split` | Test and validation shares of the whole dataset, seed, stratification | 0.15, 0.15, 42, off |
-| `model_params` | `RandomForestRegressor` settings | `n_estimators` 200, `max_depth` none, `max_features` 0.5, `min_samples_leaf` 5 |
+| `model_params` | `RandomForestRegressor` settings | `n_estimators` 200, `max_depth` none, `max_features` 1.0, `min_samples_leaf` 2 |
 | `quality_gate` | Release limit per metric (lower is better) | `mape: 0.18` |
 | `tracking` | Tracking mode, MLflow server, experiment, registered model name and the alias of the released model | `online`, the DagsHub repo's MLflow, `shipping-cost`, `shipping_cost_model`, `prod` |
 
@@ -365,20 +366,30 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 
 | Item | Value |
 | --- | --- |
-| Model | `RandomForestRegressor` (`n_estimators` 200, `max_features` 0.5, `min_samples_leaf` 5, seed 42) in one scikit-learn Pipeline with the one-hot encoder of `features.py` |
+| Model | `shipping_cost_model` version 5: `RandomForestRegressor` (`n_estimators` 200, `max_features` 1.0, `min_samples_leaf` 2, seed 42) in one scikit-learn Pipeline with the one-hot encoder of `features.py` |
 | Predicts | `cost_usd`, the carrier cost in USD of one shipment, for Pricing to review before Sales adds the margin |
 | Inputs | `transport_mode`, `cargo_type`, `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month`, all known at quoting time; `shipment_id` only identifies the row |
 | Training data | `data/raw/shipments.csv` (5,000 synthetic shipments, no personal data), version in `data/raw/shipments.csv.dvc`; split 70/15/15, fitted on train only |
 | Quality gate | `mape` at most 0.18 on validation, otherwise nothing is saved, registered or deployed |
-| Metrics (2026-11-20) | Validation `mape` 16.5%, `mae` 274 USD; test `mape` 16.0%, `mae` 215 USD; no-ML table: validation `mape` 56.0% (section 1) |
+| Metrics (2026-11-23, MLflow run `stately-sloth-91`) | Validation `mape` 13.0%, `mae` 213 USD; test `mape` 12.6%, `mae` 178 USD; no-ML table: validation `mape` 56.0%; version 3 before it: validation `mape` 16.6% (section 1) |
 | Valid range | The rules in `config.yaml` (`validation`): known modes and cargo types, distance 50 to 12,000 km, weight 10 to 9,900 kg, volume 0.028 to 93.213 m3, month 1 to 12. Shipments outside them get `422` and go to Pricing by hand |
-| Limits | Least accurate on the most expensive quarter of shipments (above about 830 USD): validation `mape` 20.7% against about 15% for the other three quarters, so Pricing confirms those estimates with the carrier first; trained on one synthetic year, so seasonality and fuel prices beyond it are not learned; assumes declared weight and volume are the real ones |
+| Limits | Least accurate on the most expensive quarter of shipments (above about 830 USD): validation `mape` 17.9% against about 11 to 12% for the other three quarters, so Pricing confirms those estimates with the carrier first; trained on one synthetic year, so seasonality and fuel prices beyond it are not learned; assumes declared weight and volume are the real ones |
 | Trace a prediction | Every `/predict` answer names its `model_version`; `GET /health` adds the release `version`, the code `git_commit`, and in `model_info` the MLflow run, training commit and data md5 of that model |
 | Owner | Business Analytics retrains weekly and monitors; IT runs the infrastructure |
 
 ## 12. Changelog
 
 One entry per release tag; the notes of each GitHub Release copy its entry.
+
+### v1.1.1 (2026-11-23)
+- New prod model: `shipping_cost_model` version 5 (`max_features` 1.0, `min_samples_leaf` 2), validation `mape` 13.0% against 16.6% for version 3; promoted by hand after comparing the two runs (section 4)
+- Same code as v1.1.0
+
+### v1.1.0 (2026-11-23)
+- `POST /predict` takes `{"records": [...]}`, as in the course reference repo; sample in `scripts/sample_request.json`, used by the smoke test and CI
+- Every answer and `GET /health` report `model_version`; `/health` also reports the code `git_commit`
+- A person promotes the model: a run that passes the gate registers a candidate version and never moves `prod`; CI has no MLflow login
+- Prod model still version 3 (the baseline of the two-model comparison)
 
 ### v1.0.1 (2026-11-22)
 - Same code and prod model as v1.0.0 (`shipping_cost_model` version 3), rebuilt and deployed as its own release

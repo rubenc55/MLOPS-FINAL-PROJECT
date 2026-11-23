@@ -11,7 +11,7 @@
 - Feature groups: categorical: transport_mode, cargo_type -> OneHotEncoder(handle_unknown="ignore") (text, 3 values each)
 - Feature groups: numeric: distance_km, weight_kg, volume_m3, urgent, month -> passthrough (no scaling for trees)
 - Excluded columns: shipment_id (identifier, kept next to each prediction for traceability)
-- Model: RandomForestRegressor with n_estimators=200, max_depth=None, max_features=0.5, min_samples_leaf=5
+- Model: RandomForestRegressor with n_estimators=200, max_depth=None, max_features=1.0, min_samples_leaf=2 (version 5; was 0.5 and 5 in version 3)
 - Metric: mae and mape, keys in evaluate_model output: ["mae", "mape"], quality gate: mape <= 0.18 (mae reported, not gated)
 - Split: test 0.15 and validation 0.15, both of the full dataset; random_state 42
 - Validation rules: required columns; no missing values; cost_usd > 0 (training only)
@@ -36,7 +36,7 @@
 - Decisions: CI -> ci.yml runs lint, test (90% branch floor), pipeline (dvc pull, stale check, dvc repro) and docker on every pull request into dev or main; CI has no MLflow login, so it never registers a model (README section 6)
 - Decisions: promotion -> a person moves prod, never the pipeline or CI: train with .env, compare val_mape with the current prod run in MLflow, then add the alias prod to that version; rollback also moves prod back, as in the course demo (README sections 4 and 7)
 - Decisions: release -> a GitHub Release from main runs deploy.yml: release guard, CI on the tag, image with the MLflow prod model, smoke test, push to ghcr.io, Render deploy hook, live smoke test; rollback redeploys the image of an older tag (README section 7)
-- Decisions: baseline -> no-ML table = median train cost per transport mode, scored on validation in every run (mape 0.560 vs model 0.165 on 2026-11-20); reported, not gated (README section 1)
+- Decisions: baseline -> no-ML table = median train cost per transport mode, scored on validation in every run (mape 0.560 vs model 0.130 on 2026-11-23, 0.165 for version 3); reported, not gated (README section 1)
 - Decisions: data versioning -> DVC pointers (*.csv.dvc) and dvc.lock in Git, CSV files and model on DagsHub; dvc repro runs python -m src.main; logs/pipeline.log is not a DVC output (README sections 3 and 4)
 - Decisions: new_shipments.csv -> stand-in of the first 20 shipments without cost_usd until the TMS export exists
 - Owners (team): utils -> Ruben Cuellar (@rubenc55), branch feature/utils
