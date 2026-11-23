@@ -208,7 +208,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 | `pipeline (dvc repro, quality gate)` | `dvc pull`, then `dvc status` must be clean, then `dvc repro --force` | `dvc.lock` is stale, data validation fails or the gate is not met |
 | `docker (build, /health, /predict)` | `docker build -t api .` with the model of the pipeline job, then calls the running container | the image does not build, or `/health`, `/predict` or the 422 check fail |
 
-With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. The pipeline job needs the GitHub Secrets `DAGSHUB_USER` and `DAGSHUB_TOKEN` for `dvc pull`. It gets the MLflow credentials (the same DagsHub secrets) only on pushes to `main`, so a pull request never registers a model or moves `prod`; the run log is kept as the `pipeline-log` artifact of each run.
+With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. For `dvc pull` the pipeline job reads two repository settings, `DAGSHUB_USER` and `DAGSHUB_TOKEN`; on pushes to `main` only, it also hands them to MLflow, so a pull request never registers a model or moves `prod`. The run log is kept as the `pipeline-log` artifact of each run.
 
 ## 7. Release, deploy and roll back
 
@@ -238,9 +238,10 @@ python scripts/smoke_test.py --url <RENDER_URL>
 
 | Date | From | To | Why | Result |
 | --- | --- | --- | --- | --- |
-| (rollback practice, filled after the first two releases) | | | | |
+| 2026-11-22 20:13 UTC | `v1.0.1` | `v1.0.0` | Rollback practice | Green in 82 s ([run](https://github.com/rubenc55/MLOPS-FINAL-PROJECT/actions/runs/45065094741)); `/health` reported `v1.0.0` |
+| 2026-11-22 20:19 UTC | `v1.0.0` | `v1.0.1` | Back to the latest release | Green in 82 s ([run](https://github.com/rubenc55/MLOPS-FINAL-PROJECT/actions/runs/45065629385)); `/health` reported `v1.0.1` |
 
-Settings the repo owner adds once (Settings > Secrets and variables > Actions): secrets `DAGSHUB_USER`, `DAGSHUB_TOKEN` (DVC and MLflow), `RENDER_DEPLOY_HOOK` (Render > service > Settings > Deploy Hook) and variable `RENDER_URL` (`https://<service>.onrender.com`). The Render service is an image-backed web service that pulls `ghcr.io/<owner>/<repo>:<tag>`.
+Settings the repo owner adds once (Settings > Secrets and variables > Actions): secrets `DAGSHUB_USER`, `DAGSHUB_TOKEN` (DVC and MLflow), `RENDER_DEPLOY_HOOK` (Render > service > Settings > Deploy Hook) and variable `RENDER_URL` (`https://<service>.onrender.com`). The Render service is an image-backed web service that pulls `ghcr.io/<owner>/<repo>:<tag>`, with Health Check Path `/health`. The deploy hook only changes the tag, so the service must already point to that image: when creating a new service, set Settings > Image to `ghcr.io/<owner>/<repo>:<first tag>` once, then every release and rollback goes through the hook.
 
 ## 8. Configuration
 
@@ -367,7 +368,11 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 
 One entry per release tag; the notes of each GitHub Release copy its entry.
 
-### v1.0.0 (date of release)
+### v1.0.1 (2026-11-22)
+- Same code and prod model as v1.0.0 (`shipping_cost_model` version 3), rebuilt and deployed as its own release
+- Used to practise the rollback: v1.0.1 -> v1.0.0 -> v1.0.1 (section 7)
+
+### v1.0.0 (2026-11-22)
 - Settings in `config.yaml` read by `src/config.py`; one logger to the console and `logs/pipeline.log`
 - Data versioned with DVC: pointers and `dvc.lock` in Git, data on DagsHub; `dvc repro` runs `python -m src.main`
 - Quality gate enforced: `mape` at most 0.18 on validation, older outputs removed, failures logged

@@ -13,7 +13,12 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
-  workflow_call:
+  workflow_call:   # from deploy.yml, which passes the two DagsHub settings below
+    secrets:
+      DAGSHUB_USER:
+        required: true
+      DAGSHUB_TOKEN:
+        required: true
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
