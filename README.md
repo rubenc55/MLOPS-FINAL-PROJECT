@@ -158,7 +158,11 @@ Passing the gate makes a model a candidate. A person decides which candidate shi
 
 1. Train once with `.env` filled in: `dvc repro --force`. The log ends with `Model registered as shipping_cost_model version N (candidate)`.
 2. Open the MLflow UI at the `tracking_uri` of `config.yaml` (https://dagshub.com/jyothikasurya2002/MLOPS-FINAL-PROJECT.mlflow, DagsHub login). Experiments > `shipping-cost`, tick the new run and the run of the current `prod` version, Compare. Look at validation only: `val_mape` and `val_mae`, lower is better. Promote only if the candidate is better; test metrics are a final audit, never the reason to choose.
-3. Models > `shipping_cost_model` > Version N. Check its Source Run is the run you compared, then Aliases > Add `prod` and confirm the move.
+3. Models > `shipping_cost_model` > Version N. Check its Source Run is the run you compared, then Aliases > Add `prod` and confirm the move. If the DagsHub page answers `INTERNAL_ERROR` (it did on 2026-11-23), make the same move from the project folder, with `.env` filled in:
+
+   ```bash
+   python -c "from dotenv import load_dotenv; load_dotenv(); from mlflow import MlflowClient; from src.config import SETTINGS; t=SETTINGS['tracking']; c=MlflowClient(t['tracking_uri'], t['tracking_uri']); c.set_registered_model_alias(t['model_name'], t['prod_alias'], 'N'); print('prod is now on version', c.get_model_version_by_alias(t['model_name'], t['prod_alias']).version)"
+   ```
 4. Models > `shipping_cost_model` shows `prod` on Version N and on no other version. Then commit `dvc.lock`, merge to `main` and publish a release (section 7).
 
 A run tag called prod, renaming a run or picking the newest version is not promotion. `prod` is one label on one version.
@@ -252,6 +256,8 @@ python scripts/smoke_test.py --url <RENDER_URL>
 | --- | --- | --- | --- | --- |
 | 2026-11-22 20:13 UTC | `v1.0.1` | `v1.0.0` | Rollback practice | Green in 82 s ([run](https://github.com/rubenc55/MLOPS-FINAL-PROJECT/actions/runs/45065094741)); `/health` reported `v1.0.0` |
 | 2026-11-22 20:19 UTC | `v1.0.0` | `v1.0.1` | Back to the latest release | Green in 82 s ([run](https://github.com/rubenc55/MLOPS-FINAL-PROJECT/actions/runs/45065629385)); `/health` reported `v1.0.1` |
+| 2026-11-23 23:00 UTC | `v1.1.1` | `v1.1.0` | Rollback practice with two models: back to model version 3, then `prod` moved back to version 3 | Green in 83 s ([run](https://github.com/rubenc55/MLOPS-FINAL-PROJECT/actions/runs/45284919346)); `/health` reported `v1.1.0`, `shipping_cost_model:v3` |
+| 2026-11-23 23:07 UTC | `v1.1.0` | `v1.1.1` | Back to the approved model: `prod` moved to version 5 first | Green in 81 s ([run](https://github.com/rubenc55/MLOPS-FINAL-PROJECT/actions/runs/45285983646)); `/health` reported `v1.1.1`, `shipping_cost_model:v5` |
 
 Settings the repo owner adds once (Settings > Secrets and variables > Actions): secrets `DAGSHUB_USER`, `DAGSHUB_TOKEN` (DVC and MLflow), `RENDER_DEPLOY_HOOK` (Render > service > Settings > Deploy Hook) and variable `RENDER_URL` (`https://<service>.onrender.com`). The Render service is an image-backed web service that pulls `ghcr.io/<owner>/<repo>:<tag>`, with Health Check Path `/health`. The deploy hook only changes the tag, so the service must already point to that image: when creating a new service, set Settings > Image to `ghcr.io/<owner>/<repo>:<first tag>` once, then every release and rollback goes through the hook.
 
@@ -371,6 +377,8 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 | Inputs | `transport_mode`, `cargo_type`, `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month`, all known at quoting time; `shipment_id` only identifies the row |
 | Training data | `data/raw/shipments.csv` (5,000 synthetic shipments, no personal data), version in `data/raw/shipments.csv.dvc`; split 70/15/15, fitted on train only |
 | Quality gate | `mape` at most 0.18 on validation, otherwise nothing is saved, registered or deployed |
+| Gate result | Passed: validation `mape` 0.130 against the limit 0.18 (run `stately-sloth-91`, 2026-11-23) |
+| Prod model | `shipping_cost_model` version 5 (alias `prod`), served by release `v1.1.1` and later; version 3 served `v1.0.0` to `v1.1.0` |
 | Metrics (2026-11-23, MLflow run `stately-sloth-91`) | Validation `mape` 13.0%, `mae` 213 USD; test `mape` 12.6%, `mae` 178 USD; no-ML table: validation `mape` 56.0%; version 3 before it: validation `mape` 16.6% (section 1) |
 | Valid range | The rules in `config.yaml` (`validation`): known modes and cargo types, distance 50 to 12,000 km, weight 10 to 9,900 kg, volume 0.028 to 93.213 m3, month 1 to 12. Shipments outside them get `422` and go to Pricing by hand |
 | Limits | Least accurate on the most expensive quarter of shipments (above about 830 USD): validation `mape` 17.9% against about 11 to 12% for the other three quarters, so Pricing confirms those estimates with the carrier first; trained on one synthetic year, so seasonality and fuel prices beyond it are not learned; assumes declared weight and volume are the real ones |
@@ -380,6 +388,10 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 ## 12. Changelog
 
 One entry per release tag; the notes of each GitHub Release copy its entry.
+
+### v1.1.2 (2026-11-24)
+- Same code and prod model as v1.1.1 (`shipping_cost_model` version 5)
+- README: link to the business video, rollback practice with two models (section 7), gate result and prod model in the model card, fallback command to move `prod` (section 4)
 
 ### v1.1.1 (2026-11-23)
 - New prod model: `shipping_cost_model` version 5 (`max_features` 1.0, `min_samples_leaf` 2), validation `mape` 13.0% against 16.6% for version 3; promoted by hand after comparing the two runs (section 4)
