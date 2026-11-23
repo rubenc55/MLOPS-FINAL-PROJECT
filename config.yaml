@@ -56,8 +56,8 @@ split:
 model_params:
   n_estimators: 200
   max_depth: null
-  max_features: 0.5
-  min_samples_leaf: 5
+  max_features: 1.0               # was 0.5: every split may use every feature
+  min_samples_leaf: 2             # was 5: smaller leaves follow cost differences more closely (model file 28 MB)
 
 # Lower is better: mape on validation must be <= its limit or the model is not released;
 # mae is reported on every run but not gated (README)
