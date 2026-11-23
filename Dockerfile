@@ -1,7 +1,7 @@
 # Dockerfile  [Serving image: the API with the released model]
 # -------------------------------------------------------------------
 # Build     docker build -t api .   (models/model.joblib must exist: dvc repro, or the prod model in deploy)
-#           deploy.yml adds --build-arg APP_VERSION=<release tag>, shown by /health
+#           deploy.yml adds --build-arg APP_VERSION=<release tag> GIT_COMMIT=<commit>, shown by /health
 # Run       docker run -p 8000:8000 api, then open http://localhost:8000/docs
 # Packages  exact versions from conda-lock.yml (linux-64), the same lock CI tests with
 # Context   only what .dockerignore allows: src/, config.yaml, conda-lock.yml, the model and its lineage
@@ -26,9 +26,10 @@ COPY --chown=$MAMBA_USER:$MAMBA_USER src/ src/
 COPY --chown=$MAMBA_USER:$MAMBA_USER config.yaml config.yaml
 COPY --chown=$MAMBA_USER:$MAMBA_USER models/ models/
 
-# 4. Release tag for /health; Render sets PORT, locally it defaults to 8000
+# 4. Release tag and code commit for /health; Render sets PORT, locally it defaults to 8000
 ARG APP_VERSION=dev
-ENV APP_VERSION=$APP_VERSION
+ARG GIT_COMMIT=unknown
+ENV APP_VERSION=$APP_VERSION GIT_COMMIT=$GIT_COMMIT
 ENV PORT=8000
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn src.api:app --host 0.0.0.0 --port ${PORT}"]

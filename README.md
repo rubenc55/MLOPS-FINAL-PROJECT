@@ -157,18 +157,18 @@ So `prod` always points to the last model that met the gate, and any prod model 
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /health` | `status` ok, the release `version`, the `model` file and `model_info`: registered model version, MLflow run, Git commit, data md5 and metrics of the prod model (`{}` for a model trained locally) |
+| `GET /health` | `status` ok, the release `version`, the code `git_commit` of the image, the `model_version` it serves (for example `shipping_cost_model:v3`; `local` for a model trained locally), the `model` file and `model_info`: MLflow run, training commit, data md5 and metrics of the prod model |
 | `POST /predict` | Estimated `cost_usd` per shipment, in the request order |
 | `GET /docs` | The contract and a form to try it, with the sample below (the only UI) |
 
-Sample request, one shipment of `new_shipments.csv` (more shipments go in the same list):
+Sample request ([`scripts/sample_request.json`](scripts/sample_request.json) holds three; the smoke test and CI send that file):
 
 ```json
-{"shipments": [{"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
+{"records": [{"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
   "weight_kg": 1683.2, "volume_m3": 4.719, "urgent": 0, "month": 3}]}
 ```
 
-Answer: `{"predictions": [{"shipment_id": 1, "prediction": 1306.97}]}` (cost in USD, same value as `reports/predictions.csv`).
+Answer: `{"model_version": "shipping_cost_model:v3", "predictions": [{"shipment_id": 1, "prediction": 1308.73}]}` (cost in USD, with the version of the model that made it).
 
 The request is strict (Pydantic, `extra="forbid"`): an unknown or missing field, a number sent as text, `true` for `urgent` or an empty list gets `422` before the model runs. A shipment that breaks a rule in `config.yaml` (unknown category, value out of range) also gets `422`, with the same message as the batch run. Without a model the service does not start, and the error says to run the pipeline first.
 
@@ -329,6 +329,7 @@ Settings the repo owner adds once (Settings > Secrets and variables > Actions): 
 ├── logs/                     # pipeline.log (generated, not in Git)
 ├── scripts/
 │   ├── fetch_prod_model.py   # download the MLflow prod model and its lineage (python -m scripts.fetch_prod_model)
+│   ├── sample_request.json   # sample body for POST /predict, used by the smoke test and CI
 │   └── smoke_test.py         # check a running API: python scripts/smoke_test.py --url <url>
 └── tests/                    # test_<module>.py per module: unit and integration tests
 ```
@@ -361,7 +362,7 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 | Metrics (2026-11-20) | Validation `mape` 16.5%, `mae` 274 USD; test `mape` 16.0%, `mae` 215 USD; no-ML table: validation `mape` 56.0% (section 1) |
 | Valid range | The rules in `config.yaml` (`validation`): known modes and cargo types, distance 50 to 12,000 km, weight 10 to 9,900 kg, volume 0.028 to 93.213 m3, month 1 to 12. Shipments outside them get `422` and go to Pricing by hand |
 | Limits | Least accurate on the most expensive quarter of shipments (above about 830 USD): validation `mape` 20.7% against about 15% for the other three quarters, so Pricing confirms those estimates with the carrier first; trained on one synthetic year, so seasonality and fuel prices beyond it are not learned; assumes declared weight and volume are the real ones |
-| Trace a prediction | `GET /health` of the live service: release `version`, registered model version and MLflow run, Git commit and data md5 of the served model |
+| Trace a prediction | Every `/predict` answer names its `model_version`; `GET /health` adds the release `version`, the code `git_commit`, and in `model_info` the MLflow run, training commit and data md5 of that model |
 | Owner | Business Analytics retrains weekly and monitors; IT runs the infrastructure |
 
 ## 12. Changelog
