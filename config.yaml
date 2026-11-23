@@ -76,4 +76,4 @@ tracking:
   tracking_uri: https://dagshub.com/jyothikasurya2002/MLOPS-FINAL-PROJECT.mlflow
   experiment: shipping-cost
   model_name: shipping_cost_model # registered model; one version per model that passes the gate
-  prod_alias: prod                # moved to every model that passes the gate; the API and deploy load this one
+  prod_alias: prod                # moved by a person after comparing runs (README section 4); the release ships it

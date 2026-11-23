@@ -3,7 +3,8 @@
 # Runs      on every pull request into dev or main, on every push to them, and from deploy.yml (workflow_call)
 # Jobs      lint, test, pipeline (dvc pull + dvc repro, quality gate), docker (build and answer /health, /predict)
 # Blocks    with branch protection on dev and main, a red job blocks the merge
-# Secrets   DAGSHUB_USER, DAGSHUB_TOKEN: dvc pull, and MLflow on DagsHub only on main (prod moves only from main)
+# Secrets   DAGSHUB_USER, DAGSHUB_TOKEN: dvc pull only. CI never logs in to MLflow, so it never registers a model
+#           or moves prod: a person promotes a model after comparing runs (README section 4)
 # Packages  the exact versions in conda-lock.yml, the same as Docker
 
 name: CI
@@ -13,7 +14,7 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
-  workflow_call:   # from deploy.yml, which passes the two DagsHub settings below
+  workflow_call:   # from deploy.yml, which passes the two DagsHub settings below (for dvc pull)
     secrets:
       DAGSHUB_USER:
         required: true
@@ -60,11 +61,7 @@ jobs:
 
   pipeline:
     name: pipeline (dvc repro, quality gate)
-    runs-on: ubuntu-latest
-    env:
-      # MLflow credentials only on pushes to main: a pull request never registers a model or moves prod
-      MLFLOW_TRACKING_USERNAME: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.DAGSHUB_USER || '' }}
-      MLFLOW_TRACKING_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.DAGSHUB_TOKEN || '' }}
+    runs-on: ubuntu-latest   # no MLflow credentials: tracking is disabled, the model only proves the code works
     steps:
       - uses: actions/checkout@v7
       - uses: mamba-org/setup-micromamba@v3

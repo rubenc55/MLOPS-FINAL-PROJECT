@@ -4,11 +4,12 @@ Inputs: SETTINGS["tracking"] (mode, tracking_uri, experiment, model_name, prod_a
 metrics from evaluate and the saved model file; MLFLOW_TRACKING_USERNAME and MLFLOW_TRACKING_PASSWORD
 (DagsHub user and token) from .env or GitHub Secrets, never in config.yaml.
 Outputs: one MLflow run per pipeline run (settings, data hash, git commit, metrics, gate result) and,
-only after the gate passes, a new version of the registered model with the prod alias.
+only after the gate passes, a new candidate version of the registered model.
 Used by: main, which owns the run (start, log, end); scripts/fetch_prod_model.py (deploy), which
 downloads the prod model for the release image.
-Why: every model can be traced to its run, data version and commit, and the gate decides which one
-is prod; without credentials the pipeline still runs, with tracking disabled.
+Why: every model can be traced to its run, data version and commit; the gate decides which models
+can be candidates and a person decides which one is prod; without credentials the pipeline still runs,
+with tracking disabled.
 """
 
 import hashlib
@@ -122,12 +123,13 @@ def log_metrics(run, metrics: dict[str, float], split: str) -> None:
 
 
 def log_model(run, model_path: Path, tracking: dict, metadata: dict) -> None:
-    """Upload the released model, register it as a new version and move the prod alias to it.
+    """Upload the model that passed the gate and register it as a new candidate version.
 
     Inputs: the MLflow run (or None), model_path (saved by save_model), tracking settings, metadata
     (data hash, commit and metrics).
-    Outputs: None; a new version of tracking["model_name"] with the alias tracking["prod_alias"].
-    Why: main calls this only after the gate passes, so prod always points to a model that met it.
+    Outputs: None; a new version of tracking["model_name"]. The prod alias does not move.
+    Why: main calls this only after the gate passes, so every version met it; a person compares the
+    runs and moves prod (README section 4), so a training run never changes what the next release ships.
     """
     if run is None:
         logger.warning("MLflow tracking is disabled, so the model is not registered (saved only at %s)", model_path)
@@ -143,8 +145,8 @@ def log_model(run, model_path: Path, tracking: dict, metadata: dict) -> None:
         client.create_registered_model(name, description="Carrier cost in USD per shipment (README section 11)")
     tags = {key: str(value) for key, value in metadata.items() if key in ("data_md5", "git_commit")}
     version = client.create_model_version(name, f"{run.info.artifact_uri}/model", run_id=run.info.run_id, tags=tags)
-    client.set_registered_model_alias(name, tracking["prod_alias"], version.version)
-    logger.info("Model registered as %s version %s, alias %s", name, version.version, tracking["prod_alias"])
+    logger.info("Model registered as %s version %s (candidate). To ship it, compare the runs and move %s "
+                "to this version (README section 4)", name, version.version, tracking["prod_alias"])
 
 
 def fetch_prod_model(tracking: dict, model_path: Path, info_path: Path) -> dict:
