@@ -27,6 +27,7 @@
 - Decisions: quality gate -> mape <= 0.18 on validation; mae reported, not gated (2026-11-09, README release rule)
 - Decisions: final model -> trained on the train split only; test split stays sealed (README check, row 2)
 - Decisions: out-of-range shipments -> historical min-max as initial rules in validate (README check, row 3)
+- Decisions: API contract -> POST /predict takes {"records": [...]} as in the course reference repo, sample in scripts/sample_request.json; /health and each answer report model_version (README section 5)
 - Decisions: serving -> batch inference in main.py and real-time API in src/api.py (GET /health, POST /predict), both through clean_dataframe, validate_dataframe and run_inference; Docker image from conda-lock.yml (README section 5)
 - Decisions: raw data -> sheet "data" exported once to data/raw/shipments.csv, never committed (README check, row 5)
 - Decisions: unknown categories -> validate rejects them first; OneHotEncoder ignores them as a safety net

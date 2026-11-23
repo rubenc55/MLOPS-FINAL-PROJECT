@@ -1,0 +1,10 @@
+{
+  "records": [
+    {"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
+     "weight_kg": 1683.2, "volume_m3": 4.719, "urgent": 0, "month": 3},
+    {"shipment_id": 2, "transport_mode": "Road", "cargo_type": "General", "distance_km": 1792.5,
+     "weight_kg": 2354.9, "volume_m3": 11.754, "urgent": 1, "month": 12},
+    {"shipment_id": 3, "transport_mode": "Air", "cargo_type": "Refrigerated", "distance_km": 5200.0,
+     "weight_kg": 350.0, "volume_m3": 2.1, "urgent": 1, "month": 7}
+  ]
+}

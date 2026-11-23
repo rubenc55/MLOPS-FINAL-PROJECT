@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -17,6 +18,7 @@ from src.utils import save_model
 FEATURES = SETTINGS["features"]
 FEATURE_COLUMNS = FEATURES["categorical"] + FEATURES["numeric"]
 SAMPLE = api.SAMPLE_SHIPMENT
+SAMPLE_REQUEST = Path(__file__).resolve().parents[1] / "scripts" / "sample_request.json"
 
 
 def _make_shipments(n_rows: int = 30) -> pd.DataFrame:
@@ -55,13 +57,14 @@ def client(tmp_path, monkeypatch):
 
 
 def test_unit_health_reports_ok_and_model(client):
-    """/health answers 200 with the release version, the served model file and no lineage when none was fetched."""
+    """/health answers 200 with release, commit and a "local" model when no prod lineage was fetched."""
     test_client, _ = client
 
     response = test_client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": "dev", "model": "model.joblib", "model_info": {}}
+    assert response.json() == {"status": "ok", "version": "dev", "git_commit": "unknown", "model_version": "local",
+                               "model": "model.joblib", "model_info": {}}
 
 
 def test_integration_health_shows_release_and_lineage(client, monkeypatch):
@@ -72,11 +75,13 @@ def test_integration_health_shows_release_and_lineage(client, monkeypatch):
             "data_md5": "4db8"}
     settings["paths"]["model_info"].write_text(json.dumps(info), encoding="utf-8")
     monkeypatch.setattr(api, "APP_VERSION", "v1.2.0")
+    monkeypatch.setattr(api, "GIT_COMMIT", "0123abc")
 
     with TestClient(api.app) as test_client:
         body = test_client.get("/health").json()
 
-    assert body["version"] == "v1.2.0"
+    assert (body["version"], body["git_commit"]) == ("v1.2.0", "0123abc")
+    assert body["model_version"] == "shipping_cost_model:v3"
     assert body["model_info"] == info
 
 
@@ -85,7 +90,7 @@ def test_integration_predict_matches_batch_inference(client):
     test_client, model = client
     shipments = _make_shipments(3).drop(columns="cost_usd")
 
-    response = test_client.post("/predict", json={"shipments": shipments.to_dict(orient="records")})
+    response = test_client.post("/predict", json={"records": shipments.to_dict(orient="records")})
 
     assert response.status_code == 200
     body = response.json()["predictions"]
@@ -94,22 +99,36 @@ def test_integration_predict_matches_batch_inference(client):
     assert [row["prediction"] for row in body] == pytest.approx(expected)
 
 
+def test_integration_sample_request_is_the_contract(client):
+    """scripts/sample_request.json (smoke test and CI) gets one prediction per record and the model version."""
+    test_client, _ = client
+    sample = json.loads(SAMPLE_REQUEST.read_text(encoding="utf-8"))
+
+    response = test_client.post("/predict", json=sample)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model_version"] == "local"
+    assert [row["shipment_id"] for row in body["predictions"]] == [row["shipment_id"] for row in sample["records"]]
+    assert sample["records"][0] == SAMPLE  # the /docs example is the first record of the sample file
+
+
 def test_unit_predict_trims_text_like_the_pipeline(client):
     """Spaces around a category are trimmed by clean_dataframe, as in batch, so the shipment is accepted."""
     test_client, _ = client
 
-    response = test_client.post("/predict", json={"shipments": [{**SAMPLE, "transport_mode": " Sea "}]})
+    response = test_client.post("/predict", json={"records": [{**SAMPLE, "transport_mode": " Sea "}]})
 
     assert response.status_code == 200
 
 
 @pytest.mark.parametrize("body", [
-    {"shipments": [{**SAMPLE, "discount": 5}]},                # unknown field (extra="forbid")
-    {"shipments": [{k: v for k, v in SAMPLE.items() if k != "month"}]},  # missing field
-    {"shipments": [{**SAMPLE, "distance_km": "8928"}]},         # number sent as text (strict)
-    {"shipments": [{**SAMPLE, "urgent": True}]},                # bool where 0 or 1 is expected (strict)
-    {"shipments": []},                                          # nothing to price
-    {"shipment": [SAMPLE]},                                     # wrong top-level key
+    {"records": [{**SAMPLE, "discount": 5}]},                  # unknown field (extra="forbid")
+    {"records": [{k: v for k, v in SAMPLE.items() if k != "month"}]},    # missing field
+    {"records": [{**SAMPLE, "distance_km": "8928"}]},           # number sent as text (strict)
+    {"records": [{**SAMPLE, "urgent": True}]},                  # bool where 0 or 1 is expected (strict)
+    {"records": []},                                            # nothing to price
+    {"shipments": [SAMPLE]},                                    # wrong top-level key
 ])
 def test_unit_predict_rejects_invalid_body_with_422(client, body):
     """Bodies that break the contract are rejected by Pydantic with 422 before any prediction."""
@@ -127,7 +146,7 @@ def test_unit_predict_rejects_rule_breaks_with_config_message(client, change, me
     """Values that break a config.yaml rule get 422 with the same message as the batch pipeline."""
     test_client, _ = client
 
-    response = test_client.post("/predict", json={"shipments": [{**SAMPLE, **change}]})
+    response = test_client.post("/predict", json={"records": [{**SAMPLE, **change}]})
 
     assert response.status_code == 422
     assert message in response.json()["detail"]
@@ -140,7 +159,7 @@ def test_unit_docs_is_the_only_ui(client):
     assert test_client.get("/docs").status_code == 200
     assert test_client.get("/redoc").status_code == 404
     schema = test_client.get("/openapi.json").json()["components"]["schemas"]["PredictionRequest"]
-    assert schema["examples"] == [{"shipments": [SAMPLE]}]
+    assert schema["examples"] == [{"records": [SAMPLE]}]
 
 
 def test_unit_shipment_fields_match_config():

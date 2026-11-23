@@ -1,6 +1,6 @@
 """Serve cost estimates over HTTP: GET /health and POST /predict (contract and test page at /docs).
 
-Inputs: JSON shipments with the columns of new_shipments.csv (no cost_usd), the released model at
+Inputs: JSON records (shipments) with the columns of new_shipments.csv (no cost_usd), the released model at
 paths.model and the validation rules in config.yaml.
 Outputs: one estimated cost in USD per shipment, next to its shipment_id.
 Used by: Pricing (live quotes), the smoke test and Render (uvicorn src.api:app).
@@ -26,8 +26,10 @@ from src.validate import validate_dataframe
 
 logger = logging.getLogger(__name__)
 
-# Release tag baked into the image by deploy.yml (docker build --build-arg APP_VERSION=v1.0.0); "dev" elsewhere
+# Release tag and code commit baked into the image by deploy.yml (docker build --build-arg); "dev" and
+# "unknown" elsewhere
 APP_VERSION = os.environ.get("APP_VERSION", "dev")
+GIT_COMMIT = os.environ.get("GIT_COMMIT", "unknown")
 
 SAMPLE_SHIPMENT = {
     "shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
@@ -55,13 +57,13 @@ class Shipment(BaseModel):
 
 
 class PredictionRequest(BaseModel):
-    """Body of POST /predict: one or more shipments."""
+    """Body of POST /predict: one or more shipments under "records" (scripts/sample_request.json)."""
 
     model_config = ConfigDict(
-        extra="forbid", strict=True, json_schema_extra={"examples": [{"shipments": [SAMPLE_SHIPMENT]}]}
+        extra="forbid", strict=True, json_schema_extra={"examples": [{"records": [SAMPLE_SHIPMENT]}]}
     )
 
-    shipments: list[Shipment] = Field(min_length=1)
+    records: list[Shipment] = Field(min_length=1)
 
 
 class Prediction(BaseModel):
@@ -72,9 +74,22 @@ class Prediction(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    """Answer of POST /predict, in the same order as the request."""
+    """Answer of POST /predict, in the same order as the request, with the model version that made it."""
 
+    model_version: str
     predictions: list[Prediction]
+
+
+def model_version(model_info: dict) -> str:
+    """Concrete registry version of the served model, e.g. "shipping_cost_model:v3"; "local" without lineage.
+
+    Inputs: the lineage read from paths.model_info at start-up (empty for a model trained locally).
+    Outputs: "<registered model name>:v<version>", or "local".
+    Why: the alias prod moves; the version it resolved to at release time does not, so report that.
+    """
+    if not model_info.get("version"):
+        return "local"
+    return f"{model_info['model'].split('@')[0]}:v{model_info['version']}"
 
 
 @asynccontextmanager
@@ -101,13 +116,15 @@ app = FastAPI(
 def health() -> dict:
     """Report that the service is up, which release it runs and where its model comes from.
 
-    Inputs: none. Outputs: {"status": "ok", "version": release tag, "model": file name,
-    "model_info": model version, MLflow run, git commit, data md5 and metrics of the prod model ({} if unknown)}.
+    Inputs: none. Outputs: {"status": "ok", "version": release tag, "git_commit": code commit of the image,
+    "model_version": e.g. "shipping_cost_model:v3", "model": file name, "model_info": MLflow run, training
+    commit, data md5 and metrics of the prod model ({} if unknown)}.
     Why: Render and the smoke test check this first; it also traces every live prediction to its
     release, MLflow run, data version and commit.
     """
     return {
-        "status": "ok", "version": APP_VERSION, "model": SETTINGS["paths"]["model"].name,
+        "status": "ok", "version": APP_VERSION, "git_commit": GIT_COMMIT,
+        "model_version": model_version(app.state.model_info), "model": SETTINGS["paths"]["model"].name,
         "model_info": app.state.model_info,
     }
 
@@ -123,7 +140,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
     """
     problem, features = SETTINGS["problem"], SETTINGS["features"]
     feature_columns = features["categorical"] + features["numeric"]
-    df = clean_dataframe(pd.DataFrame([shipment.model_dump() for shipment in request.shipments]))
+    df = clean_dataframe(pd.DataFrame([shipment.model_dump() for shipment in request.records]))
     try:
         validate_dataframe(df, [problem["id_column"]] + feature_columns, **SETTINGS["validation"])
     except ValueError as error:
@@ -131,7 +148,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
         raise HTTPException(status_code=422, detail=str(error)) from error
     predictions = run_inference(app.state.model, df[feature_columns])
     logger.info("Predicted %d shipments", len(predictions))
-    return PredictionResponse(predictions=[
+    return PredictionResponse(model_version=model_version(app.state.model_info), predictions=[
         Prediction(shipment_id=shipment_id, prediction=prediction)
         for shipment_id, prediction in zip(df[problem["id_column"]], predictions["prediction"])
     ])

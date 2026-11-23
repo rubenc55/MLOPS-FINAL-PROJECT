@@ -108,17 +108,16 @@ jobs:
           name: model
           path: models
       - name: docker build
-        run: docker build -t api .
+        run: docker build --build-arg GIT_COMMIT="${GITHUB_SHA}" -t api .
       - name: Run the container and call /health and /predict
         run: |
           docker run -d --name api -p 8000:8000 api
           for _ in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 2; done
           curl -sf localhost:8000/health
           curl -sf -X POST localhost:8000/predict -H "Content-Type: application/json" \
-            -d '{"shipments": [{"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General",
-                 "distance_km": 8928.0, "weight_kg": 1683.2, "volume_m3": 4.719, "urgent": 0, "month": 3}]}'
+            -d @scripts/sample_request.json
           code=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:8000/predict \
-            -H "Content-Type: application/json" -d '{"shipments": []}')
+            -H "Content-Type: application/json" -d '{"records": []}')
           test "$code" = "422" || { echo "Expected 422 for an empty request, got $code"; exit 1; }
       - name: Container logs
         if: always()
