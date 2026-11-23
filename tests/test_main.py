@@ -137,21 +137,21 @@ def _spy_tracking(monkeypatch) -> dict:
     """Record main's calls to log_model and end_run, so a test can check what MLflow would receive."""
     calls = {"log_model": [], "end_run": []}
     monkeypatch.setattr("src.main.log_model", lambda run, path, tracking, metadata: calls["log_model"].append(
-        (path, tracking["prod_alias"], metadata)))
+        (path, metadata)))
     monkeypatch.setattr("src.main.end_run", lambda run, error=None: calls["end_run"].append(error))
     return calls
 
 
-def test_integration_passing_run_registers_model_as_prod(tmp_path, monkeypatch):
-    """A run that passes the gate registers the saved model once, as prod, with its data hash, commit and metrics."""
+def test_integration_passing_run_registers_model_as_candidate(tmp_path, monkeypatch):
+    """A run that passes the gate registers the saved model once, with its data hash, commit and metrics."""
     settings = _make_settings(tmp_path, quality_gate={"mape": 1_000_000.0})
     calls = _spy_tracking(monkeypatch)
 
     run_pipeline(settings)
 
     assert len(calls["log_model"]) == 1
-    path, alias, metadata = calls["log_model"][0]
-    assert path == settings["paths"]["model"] and path.is_file() and alias == "prod"
+    path, metadata = calls["log_model"][0]
+    assert path == settings["paths"]["model"] and path.is_file()
     assert len(metadata["data_md5"]) == 32 and metadata["git_commit"]
     assert set(metadata["val_metrics"]) == set(metadata["test_metrics"]) == {"mae", "mape"}
     assert calls["end_run"] == [None]

@@ -4,7 +4,8 @@ Inputs: SETTINGS from src/config.py (config.yaml: paths, columns, rules, split, 
 quality gate, logging, tracking); MLflow credentials from .env.
 Outputs: the clean training table, the model (only if the quality gate passes), the
 predictions and the run log (logs/pipeline.log), written to the paths set in config.yaml;
-one MLflow run per pipeline run and, after the gate passes, the model registered as prod.
+one MLflow run per pipeline run and, after the gate passes, the model registered as a candidate version
+(a person moves prod, README section 4).
 Used by: the team, CI and the stage 3 API;
 it is the only place where the modules are wired together.
 Why: one entry point and one source of settings, so every run follows the same steps.
@@ -184,8 +185,8 @@ def run_pipeline(settings: dict) -> dict[str, float]:
     Inputs: a settings dict shaped like SETTINGS (tests pass a copy with temporary paths).
     Outputs: validation metrics of the released model.
     Why: settings as a parameter lets tests run the whole pipeline without touching real folders;
-    main owns the MLflow run: it records the data hash and commit, registers the model as prod only
-    after the gate and the predictions succeed, and closes the run as failed on any error.
+    main owns the MLflow run: it records the data hash and commit, registers the model as a candidate
+    version only after the gate and the predictions succeed, and closes the run as failed on any error.
     """
     logger.info("Starting the shipping cost pipeline")
     _remove_previous_outputs(settings["paths"])

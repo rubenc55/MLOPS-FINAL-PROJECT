@@ -133,17 +133,30 @@ def test_unit_disabled_run_logs_and_registers_nothing(tmp_path, caplog):
     assert "model is not registered" in caplog.text
 
 
-def test_integration_log_model_registers_versions_and_moves_prod(local_mlflow, tmp_path):
-    """Each released model becomes a new version with its lineage tags, and prod moves to the newest one."""
-    model_path = _model_file(tmp_path)
-    for _ in range(2):
-        run = tracking.start_run(local_mlflow, {})
-        tracking.log_model(run, model_path, local_mlflow, {"data_md5": "4db8", "git_commit": "abc123"})
-        tracking.end_run(run)
+def _promote(settings: dict, version: str) -> None:
+    """Move prod to a version, as a person does after comparing the runs (README section 4)."""
+    MlflowClient().set_registered_model_alias(settings["model_name"], settings["prod_alias"], version)
 
-    prod = MlflowClient().get_model_version_by_alias("shipping_cost_model", "prod")
-    assert str(prod.version) == "2" and prod.run_id == run.info.run_id
-    assert prod.tags == {"data_md5": "4db8", "git_commit": "abc123"}
+
+def test_integration_log_model_registers_candidates_and_never_moves_prod(local_mlflow, tmp_path):
+    """Each model that passed the gate becomes a new version with its lineage tags; prod stays where a person put it."""
+    model_path = _model_file(tmp_path)
+    run = tracking.start_run(local_mlflow, {})
+    tracking.log_model(run, model_path, local_mlflow, {"data_md5": "4db8", "git_commit": "abc123"})
+    tracking.end_run(run)
+    client = MlflowClient()
+    assert client.get_model_version("shipping_cost_model", "1").aliases == []
+
+    _promote(local_mlflow, "1")
+    later = tracking.start_run(local_mlflow, {})
+    tracking.log_model(later, model_path, local_mlflow, {"data_md5": "9f01", "git_commit": "def456"})
+    tracking.end_run(later)
+
+    candidate = client.get_model_version("shipping_cost_model", "2")
+    assert candidate.run_id == later.info.run_id and candidate.aliases == []
+    assert candidate.tags == {"data_md5": "9f01", "git_commit": "def456"}
+    prod = client.get_model_version_by_alias("shipping_cost_model", "prod")
+    assert str(prod.version) == "1" and prod.run_id == run.info.run_id
 
 
 def test_unit_log_model_reraises_unexpected_registry_errors(local_mlflow, tmp_path, monkeypatch):
@@ -166,6 +179,7 @@ def test_integration_fetch_prod_model_replaces_model_and_writes_lineage(local_ml
     tracking.log_metrics(run, {"mape": 0.165}, "val")
     tracking.log_model(run, released, local_mlflow, {"data_md5": "4db8", "git_commit": "abc123"})
     tracking.end_run(run)
+    _promote(local_mlflow, "1")
     model_path = _model_file(tmp_path / "serve", b"older local model")
     info_path = model_path.parent / "model_info.json"
 
@@ -190,12 +204,17 @@ def test_integration_fetch_prod_model_wrong_file_raises(local_mlflow, tmp_path):
     run = tracking.start_run(local_mlflow, {})
     tracking.log_model(run, _model_file(tmp_path), local_mlflow, {})
     tracking.end_run(run)
+    _promote(local_mlflow, "1")
 
     with pytest.raises(FileNotFoundError, match="has no file other.joblib"):
         tracking.fetch_prod_model(local_mlflow, tmp_path / "other.joblib", tmp_path / "info.json")
 
 
-def test_unit_fetch_prod_model_without_prod_alias_raises(local_mlflow, tmp_path):
-    """Before any model passed the gate there is no prod version, so the deploy stops at the registry."""
+def test_integration_fetch_prod_model_without_prod_alias_raises(local_mlflow, tmp_path):
+    """A candidate that nobody promoted is never shipped: with no prod version the deploy stops at the registry."""
+    run = tracking.start_run(local_mlflow, {})
+    tracking.log_model(run, _model_file(tmp_path), local_mlflow, {})
+    tracking.end_run(run)
+
     with pytest.raises(MlflowException):
         tracking.fetch_prod_model(local_mlflow, tmp_path / "model.joblib", tmp_path / "info.json")

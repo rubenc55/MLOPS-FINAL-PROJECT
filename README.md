@@ -147,9 +147,20 @@ Every run first deletes the model and predictions of the previous run. If the ga
 | The md5 of `data/raw/shipments.csv` (the same hash as in `shipments.csv.dvc`) and the Git commit | Run tags `data_md5`, `git_commit` |
 | `val_mae`, `val_mape`, `baseline_val_mae`, `baseline_val_mape`, and after the gate `test_mae`, `test_mape` | Run metrics |
 | Why a run stopped (failed gate or bad data) | Run status FAILED, tag `error` |
-| The model, only if the gate passes and the predictions are written | Registered model `shipping_cost_model`: a new version with tags `data_md5` and `git_commit`, and the alias `prod` moved to it |
+| The model, only if the gate passes and the predictions are written | Registered model `shipping_cost_model`: a new version with tags `data_md5` and `git_commit` (a candidate; `prod` does not move) |
 
-So `prod` always points to the last model that met the gate, and any prod model leads back to its run, data version and commit. Without `MLFLOW_TRACKING_PASSWORD` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing.
+Any version leads back to its run, data version and commit. Without `MLFLOW_TRACKING_PASSWORD` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing. CI never has the MLflow login, so only a run on a laptop with `.env` filled in registers a version.
+
+### Promote a model to prod
+
+Passing the gate makes a model a candidate. A person decides which candidate ships: the next release builds its image with the version that has the alias `prod`, and moving `prod` changes nothing that is already live.
+
+1. Train once with `.env` filled in: `dvc repro --force`. The log ends with `Model registered as shipping_cost_model version N (candidate)`.
+2. Open the MLflow UI at the `tracking_uri` of `config.yaml` (https://dagshub.com/jyothikasurya2002/MLOPS-FINAL-PROJECT.mlflow, DagsHub login). Experiments > `shipping-cost`, tick the new run and the run of the current `prod` version, Compare. Look at validation only: `val_mape` and `val_mae`, lower is better. Promote only if the candidate is better; test metrics are a final audit, never the reason to choose.
+3. Models > `shipping_cost_model` > Version N. Check its Source Run is the run you compared, then Aliases > Add `prod` and confirm the move.
+4. Models > `shipping_cost_model` shows `prod` on Version N and on no other version. Then commit `dvc.lock`, merge to `main` and publish a release (section 7).
+
+A run tag called prod, renaming a run or picking the newest version is not promotion. `prod` is one label on one version.
 
 ## 5. Serve the API
 
@@ -208,7 +219,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 | `pipeline (dvc repro, quality gate)` | `dvc pull`, then `dvc status` must be clean, then `dvc repro --force` | `dvc.lock` is stale, data validation fails or the gate is not met |
 | `docker (build, /health, /predict)` | `docker build -t api .` with the model of the pipeline job, then calls the running container | the image does not build, or `/health`, `/predict` or the 422 check fail |
 
-With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. For `dvc pull` the pipeline job reads two repository settings, `DAGSHUB_USER` and `DAGSHUB_TOKEN`; on pushes to `main` only, it also hands them to MLflow, so a pull request never registers a model or moves `prod`. The run log is kept as the `pipeline-log` artifact of each run.
+With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. For `dvc pull` the pipeline job reads two repository settings, `DAGSHUB_USER` and `DAGSHUB_TOKEN`. It does not get the MLflow login, so CI trains only to prove the code still works: the model is thrown away, nothing is registered and `prod` never moves. The run log is kept as the `pipeline-log` artifact of each run.
 
 ## 7. Release, deploy and roll back
 
@@ -224,7 +235,7 @@ Nothing reaches the live service without a person publishing a GitHub Release fr
 
 To release:
 
-1. Merge into `main` through pull requests, with CI green.
+1. If the release ships a new model, promote it first (section 4). Merge into `main` through pull requests, with CI green.
 2. On GitHub: Releases > Draft a new release, new tag `vX.Y.Z` on target `main`, notes from the changelog at the end of this README, Publish.
 3. Watch Actions > Deploy. When it is green, `GET <RENDER_URL>/health` shows the new `version` and, in `model_info`, the model version, MLflow run, Git commit and data md5 of the served model.
 
@@ -234,7 +245,7 @@ Check the live service by hand at any time (Render free services sleep after 15 
 python scripts/smoke_test.py --url <RENDER_URL>
 ```
 
-**Roll back:** every release keeps its own image, so going back does not rebuild anything. Actions > Deploy > Run workflow, enter the older tag (for example `v1.0.0`), Run. The guard checks the tag is on `main`, Render deploys that image and the smoke test waits until `/health` reports it. To return to the latest release, run it again with the latest tag.
+**Roll back:** every release keeps its own image, so going back does not rebuild anything. Actions > Deploy > Run workflow, enter the older tag (for example `v1.0.0`), Run. The guard checks the tag is on `main`, Render deploys that image and the smoke test waits until `/health` reports it. Code and model go back together, because the image holds both. If the older release serves another model version, move `prod` back to that version too (section 4, step 3), so the next release does not ship the model you rolled back from. To return to the latest release, move `prod` forward first, then run it again with the latest tag.
 
 | Date | From | To | Why | Result |
 | --- | --- | --- | --- | --- |
