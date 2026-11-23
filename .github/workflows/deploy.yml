@@ -41,7 +41,9 @@ jobs:
     if: github.event_name == 'release'
     needs: guard
     uses: ./.github/workflows/ci.yml
-    secrets: inherit
+    secrets:   # only what CI uses (dvc pull and MLflow), not every repository secret
+      DAGSHUB_USER: ${{ secrets.DAGSHUB_USER }}
+      DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
 
   build:
     name: build release image (prod model)
@@ -66,7 +68,8 @@ jobs:
       - name: docker build, tagged with the release
         run: |
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:$TAG" >> "$GITHUB_ENV"
-          docker build --build-arg APP_VERSION="$TAG" -t "ghcr.io/${GITHUB_REPOSITORY,,}:$TAG" .
+          docker build --build-arg APP_VERSION="$TAG" --build-arg GIT_COMMIT="$GITHUB_SHA" \
+            -t "ghcr.io/${GITHUB_REPOSITORY,,}:$TAG" .
       - name: Smoke test the image before it is pushed
         run: |
           docker run -d --name api -p 8000:8000 "$IMAGE"

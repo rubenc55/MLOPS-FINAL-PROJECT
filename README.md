@@ -44,16 +44,17 @@ When a sales rep enters a quote request, the Pricing analyst sees the model's es
 - **Personal or sensitive data:** No. The dataset is synthetic and has no customer data.
 
 ### Value, cost and risks
-- **Benefit:** cost estimates in minutes instead of 24 to 48 h. On the same unseen shipments the model is about 3 times more accurate than a tariff table (measured 2026-11-20, train 3,500 / validation 750 / test 750 shipments):
+- **Benefit:** cost estimates in minutes instead of 24 to 48 h. On the same unseen shipments the model is about 4 times more accurate than a tariff table (measured 2026-11-23, train 3,500 / validation 750 / test 750 shipments):
 
 | Method | Validation `mape` | Validation `mae` | Test `mape` | Test `mae` |
 | --- | --- | --- | --- | --- |
 | One median cost for every shipment | 88.5% | 1,046 USD | 96.3% | 917 USD |
 | Median cost per transport mode (baseline) | 56.0% | 892 USD | 59.8% | 756 USD |
 | Rate per km by mode and cargo type, urgent premium | 69.7% | 860 USD | 63.5% | 700 USD |
-| Model (`RandomForestRegressor`) | 16.5% | 274 USD | 16.0% | 215 USD |
+| Model (`RandomForestRegressor`, `shipping_cost_model` version 5, prod from v1.1.1) | 13.0% | 213 USD | 12.6% | 178 USD |
+| Earlier model (version 3, prod up to v1.1.0) | 16.6% | 274 USD | 16.0% | 215 USD |
 
-73.5% of the model's validation estimates are within 18% of the carrier cost, against 16.9% for the per-km table.
+78.5% of the model's validation estimates are within 18% of the carrier cost (73.5% for version 3), against 16.9% for the per-km table.
 - **Rough cost (estimate):** Business Analytics team, about 8,000 USD per month in salaries for 3 months (about 24,000 USD); existing IT infrastructure; 12 weeks to production.
 - **MLOps running cost:** 0 USD per month at the current volume, on the free plans of GitHub Actions (CI and deploy), DagsHub (data, and MLflow runs and model registry) and Render (API, sleeps after 15 minutes without requests). A paid Render plan is needed only when quotes cannot wait about a minute for the service to wake up (check each provider's pricing page before scaling).
 - **When it is not worth it:** for a branch with few quotes, or if carriers publish fixed tariffs, the median table above is cheaper to run and good enough.
@@ -147,9 +148,20 @@ Every run first deletes the model and predictions of the previous run. If the ga
 | The md5 of `data/raw/shipments.csv` (the same hash as in `shipments.csv.dvc`) and the Git commit | Run tags `data_md5`, `git_commit` |
 | `val_mae`, `val_mape`, `baseline_val_mae`, `baseline_val_mape`, and after the gate `test_mae`, `test_mape` | Run metrics |
 | Why a run stopped (failed gate or bad data) | Run status FAILED, tag `error` |
-| The model, only if the gate passes and the predictions are written | Registered model `shipping_cost_model`: a new version with tags `data_md5` and `git_commit`, and the alias `prod` moved to it |
+| The model, only if the gate passes and the predictions are written | Registered model `shipping_cost_model`: a new version with tags `data_md5` and `git_commit` (a candidate; `prod` does not move) |
 
-So `prod` always points to the last model that met the gate, and any prod model leads back to its run, data version and commit. Without `MLFLOW_TRACKING_PASSWORD` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing.
+Any version leads back to its run, data version and commit. Without `MLFLOW_TRACKING_PASSWORD` (or with `tracking.mode: disabled`) the run logs a warning and registers nothing. CI never has the MLflow login, so only a run on a laptop with `.env` filled in registers a version.
+
+### Promote a model to prod
+
+Passing the gate makes a model a candidate. A person decides which candidate ships: the next release builds its image with the version that has the alias `prod`, and moving `prod` changes nothing that is already live.
+
+1. Train once with `.env` filled in: `dvc repro --force`. The log ends with `Model registered as shipping_cost_model version N (candidate)`.
+2. Open the MLflow UI at the `tracking_uri` of `config.yaml` (https://dagshub.com/jyothikasurya2002/MLOPS-FINAL-PROJECT.mlflow, DagsHub login). Experiments > `shipping-cost`, tick the new run and the run of the current `prod` version, Compare. Look at validation only: `val_mape` and `val_mae`, lower is better. Promote only if the candidate is better; test metrics are a final audit, never the reason to choose.
+3. Models > `shipping_cost_model` > Version N. Check its Source Run is the run you compared, then Aliases > Add `prod` and confirm the move.
+4. Models > `shipping_cost_model` shows `prod` on Version N and on no other version. Then commit `dvc.lock`, merge to `main` and publish a release (section 7).
+
+A run tag called prod, renaming a run or picking the newest version is not promotion. `prod` is one label on one version.
 
 ## 5. Serve the API
 
@@ -157,18 +169,18 @@ So `prod` always points to the last model that met the gate, and any prod model 
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /health` | `status` ok, the release `version`, the `model` file and `model_info`: registered model version, MLflow run, Git commit, data md5 and metrics of the prod model (`{}` for a model trained locally) |
+| `GET /health` | `status` ok, the release `version`, the code `git_commit` of the image, the `model_version` it serves (for example `shipping_cost_model:v5`; `local` for a model trained locally), the `model` file and `model_info`: MLflow run, training commit, data md5 and metrics of the prod model |
 | `POST /predict` | Estimated `cost_usd` per shipment, in the request order |
 | `GET /docs` | The contract and a form to try it, with the sample below (the only UI) |
 
-Sample request, one shipment of `new_shipments.csv` (more shipments go in the same list):
+Sample request ([`scripts/sample_request.json`](scripts/sample_request.json) holds three; the smoke test and CI send that file):
 
 ```json
-{"shipments": [{"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
+{"records": [{"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
   "weight_kg": 1683.2, "volume_m3": 4.719, "urgent": 0, "month": 3}]}
 ```
 
-Answer: `{"predictions": [{"shipment_id": 1, "prediction": 1306.97}]}` (cost in USD, same value as `reports/predictions.csv`).
+Answer: `{"model_version": "shipping_cost_model:v5", "predictions": [{"shipment_id": 1, "prediction": 1191.43}]}` (cost in USD, with the version of the model that made it).
 
 The request is strict (Pydantic, `extra="forbid"`): an unknown or missing field, a number sent as text, `true` for `urgent` or an empty list gets `422` before the model runs. A shipment that breaks a rule in `config.yaml` (unknown category, value out of range) also gets `422`, with the same message as the batch run. Without a model the service does not start, and the error says to run the pipeline first.
 
@@ -208,7 +220,7 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 | `pipeline (dvc repro, quality gate)` | `dvc pull`, then `dvc status` must be clean, then `dvc repro --force` | `dvc.lock` is stale, data validation fails or the gate is not met |
 | `docker (build, /health, /predict)` | `docker build -t api .` with the model of the pipeline job, then calls the running container | the image does not build, or `/health`, `/predict` or the 422 check fail |
 
-With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. The pipeline job needs the GitHub Secrets `DAGSHUB_USER` and `DAGSHUB_TOKEN` for `dvc pull`. It gets the MLflow credentials (the same DagsHub secrets) only on pushes to `main`, so a pull request never registers a model or moves `prod`; the run log is kept as the `pipeline-log` artifact of each run.
+With branch protection on `dev` and `main` (Settings > Branches: require these four checks to pass), a red check blocks the merge. For `dvc pull` the pipeline job reads two repository settings, `DAGSHUB_USER` and `DAGSHUB_TOKEN`. It does not get the MLflow login, so CI trains only to prove the code still works: the model is thrown away, nothing is registered and `prod` never moves. The run log is kept as the `pipeline-log` artifact of each run.
 
 ## 7. Release, deploy and roll back
 
@@ -224,7 +236,7 @@ Nothing reaches the live service without a person publishing a GitHub Release fr
 
 To release:
 
-1. Merge into `main` through pull requests, with CI green.
+1. If the release ships a new model, promote it first (section 4). Merge into `main` through pull requests, with CI green.
 2. On GitHub: Releases > Draft a new release, new tag `vX.Y.Z` on target `main`, notes from the changelog at the end of this README, Publish.
 3. Watch Actions > Deploy. When it is green, `GET <RENDER_URL>/health` shows the new `version` and, in `model_info`, the model version, MLflow run, Git commit and data md5 of the served model.
 
@@ -234,13 +246,14 @@ Check the live service by hand at any time (Render free services sleep after 15 
 python scripts/smoke_test.py --url <RENDER_URL>
 ```
 
-**Roll back:** every release keeps its own image, so going back does not rebuild anything. Actions > Deploy > Run workflow, enter the older tag (for example `v1.0.0`), Run. The guard checks the tag is on `main`, Render deploys that image and the smoke test waits until `/health` reports it. To return to the latest release, run it again with the latest tag.
+**Roll back:** every release keeps its own image, so going back does not rebuild anything. Actions > Deploy > Run workflow, enter the older tag (for example `v1.0.0`), Run. The guard checks the tag is on `main`, Render deploys that image and the smoke test waits until `/health` reports it. Code and model go back together, because the image holds both. If the older release serves another model version, move `prod` back to that version too (section 4, step 3), so the next release does not ship the model you rolled back from. To return to the latest release, move `prod` forward first, then run it again with the latest tag.
 
 | Date | From | To | Why | Result |
 | --- | --- | --- | --- | --- |
-| (rollback practice, filled after the first two releases) | | | | |
+| 2026-11-22 20:13 UTC | `v1.0.1` | `v1.0.0` | Rollback practice | Green in 82 s ([run](https://github.com/rubenc55/MLOPS-FINAL-PROJECT/actions/runs/45065094741)); `/health` reported `v1.0.0` |
+| 2026-11-22 20:19 UTC | `v1.0.0` | `v1.0.1` | Back to the latest release | Green in 82 s ([run](https://github.com/rubenc55/MLOPS-FINAL-PROJECT/actions/runs/45065629385)); `/health` reported `v1.0.1` |
 
-Settings the repo owner adds once (Settings > Secrets and variables > Actions): secrets `DAGSHUB_USER`, `DAGSHUB_TOKEN` (DVC and MLflow), `RENDER_DEPLOY_HOOK` (Render > service > Settings > Deploy Hook) and variable `RENDER_URL` (`https://<service>.onrender.com`). The Render service is an image-backed web service that pulls `ghcr.io/<owner>/<repo>:<tag>`.
+Settings the repo owner adds once (Settings > Secrets and variables > Actions): secrets `DAGSHUB_USER`, `DAGSHUB_TOKEN` (DVC and MLflow), `RENDER_DEPLOY_HOOK` (Render > service > Settings > Deploy Hook) and variable `RENDER_URL` (`https://<service>.onrender.com`). The Render service is an image-backed web service that pulls `ghcr.io/<owner>/<repo>:<tag>`, with Health Check Path `/health`. The deploy hook only changes the tag, so the service must already point to that image: when creating a new service, set Settings > Image to `ghcr.io/<owner>/<repo>:<first tag>` once, then every release and rollback goes through the hook.
 
 ## 8. Configuration
 
@@ -254,7 +267,7 @@ Settings the repo owner adds once (Settings > Secrets and variables > Actions): 
 | `features` | Categorical (one-hot encoded) and numeric (passed through) columns | `transport_mode`, `cargo_type` / `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month` |
 | `validation` | Allowed categories and numeric ranges, limits included | For example `transport_mode`: Road, Sea, Air; `month`: 1 to 12 |
 | `split` | Test and validation shares of the whole dataset, seed, stratification | 0.15, 0.15, 42, off |
-| `model_params` | `RandomForestRegressor` settings | `n_estimators` 200, `max_depth` none, `max_features` 0.5, `min_samples_leaf` 5 |
+| `model_params` | `RandomForestRegressor` settings | `n_estimators` 200, `max_depth` none, `max_features` 1.0, `min_samples_leaf` 2 |
 | `quality_gate` | Release limit per metric (lower is better) | `mape: 0.18` |
 | `tracking` | Tracking mode, MLflow server, experiment, registered model name and the alias of the released model | `online`, the DagsHub repo's MLflow, `shipping-cost`, `shipping_cost_model`, `prod` |
 
@@ -328,6 +341,7 @@ Settings the repo owner adds once (Settings > Secrets and variables > Actions): 
 ├── logs/                     # pipeline.log (generated, not in Git)
 ├── scripts/
 │   ├── fetch_prod_model.py   # download the MLflow prod model and its lineage (python -m scripts.fetch_prod_model)
+│   ├── sample_request.json   # sample body for POST /predict, used by the smoke test and CI
 │   └── smoke_test.py         # check a running API: python scripts/smoke_test.py --url <url>
 └── tests/                    # test_<module>.py per module: unit and integration tests
 ```
@@ -352,22 +366,36 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 
 | Item | Value |
 | --- | --- |
-| Model | `RandomForestRegressor` (`n_estimators` 200, `max_features` 0.5, `min_samples_leaf` 5, seed 42) in one scikit-learn Pipeline with the one-hot encoder of `features.py` |
+| Model | `shipping_cost_model` version 5: `RandomForestRegressor` (`n_estimators` 200, `max_features` 1.0, `min_samples_leaf` 2, seed 42) in one scikit-learn Pipeline with the one-hot encoder of `features.py` |
 | Predicts | `cost_usd`, the carrier cost in USD of one shipment, for Pricing to review before Sales adds the margin |
 | Inputs | `transport_mode`, `cargo_type`, `distance_km`, `weight_kg`, `volume_m3`, `urgent`, `month`, all known at quoting time; `shipment_id` only identifies the row |
 | Training data | `data/raw/shipments.csv` (5,000 synthetic shipments, no personal data), version in `data/raw/shipments.csv.dvc`; split 70/15/15, fitted on train only |
 | Quality gate | `mape` at most 0.18 on validation, otherwise nothing is saved, registered or deployed |
-| Metrics (2026-11-20) | Validation `mape` 16.5%, `mae` 274 USD; test `mape` 16.0%, `mae` 215 USD; no-ML table: validation `mape` 56.0% (section 1) |
+| Metrics (2026-11-23, MLflow run `stately-sloth-91`) | Validation `mape` 13.0%, `mae` 213 USD; test `mape` 12.6%, `mae` 178 USD; no-ML table: validation `mape` 56.0%; version 3 before it: validation `mape` 16.6% (section 1) |
 | Valid range | The rules in `config.yaml` (`validation`): known modes and cargo types, distance 50 to 12,000 km, weight 10 to 9,900 kg, volume 0.028 to 93.213 m3, month 1 to 12. Shipments outside them get `422` and go to Pricing by hand |
-| Limits | Least accurate on the most expensive quarter of shipments (above about 830 USD): validation `mape` 20.7% against about 15% for the other three quarters, so Pricing confirms those estimates with the carrier first; trained on one synthetic year, so seasonality and fuel prices beyond it are not learned; assumes declared weight and volume are the real ones |
-| Trace a prediction | `GET /health` of the live service: release `version`, registered model version and MLflow run, Git commit and data md5 of the served model |
+| Limits | Least accurate on the most expensive quarter of shipments (above about 830 USD): validation `mape` 17.9% against about 11 to 12% for the other three quarters, so Pricing confirms those estimates with the carrier first; trained on one synthetic year, so seasonality and fuel prices beyond it are not learned; assumes declared weight and volume are the real ones |
+| Trace a prediction | Every `/predict` answer names its `model_version`; `GET /health` adds the release `version`, the code `git_commit`, and in `model_info` the MLflow run, training commit and data md5 of that model |
 | Owner | Business Analytics retrains weekly and monitors; IT runs the infrastructure |
 
 ## 12. Changelog
 
 One entry per release tag; the notes of each GitHub Release copy its entry.
 
-### v1.0.0 (date of release)
+### v1.1.1 (2026-11-23)
+- New prod model: `shipping_cost_model` version 5 (`max_features` 1.0, `min_samples_leaf` 2), validation `mape` 13.0% against 16.6% for version 3; promoted by hand after comparing the two runs (section 4)
+- Same code as v1.1.0
+
+### v1.1.0 (2026-11-23)
+- `POST /predict` takes `{"records": [...]}`, as in the course reference repo; sample in `scripts/sample_request.json`, used by the smoke test and CI
+- Every answer and `GET /health` report `model_version`; `/health` also reports the code `git_commit`
+- A person promotes the model: a run that passes the gate registers a candidate version and never moves `prod`; CI has no MLflow login
+- Prod model still version 3 (the baseline of the two-model comparison)
+
+### v1.0.1 (2026-11-22)
+- Same code and prod model as v1.0.0 (`shipping_cost_model` version 3), rebuilt and deployed as its own release
+- Used to practise the rollback: v1.0.1 -> v1.0.0 -> v1.0.1 (section 7)
+
+### v1.0.0 (2026-11-22)
 - Settings in `config.yaml` read by `src/config.py`; one logger to the console and `logs/pipeline.log`
 - Data versioned with DVC: pointers and `dvc.lock` in Git, data on DagsHub; `dvc repro` runs `python -m src.main`
 - Quality gate enforced: `mape` at most 0.18 on validation, older outputs removed, failures logged

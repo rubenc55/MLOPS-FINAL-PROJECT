@@ -13,8 +13,8 @@ stages:
       size: 243653
     - path: src
       hash: md5
-      md5: 884a4223cfe27e1a285235676c92857b.dir
-      size: 50810
+      md5: 4dc0fafe75ac8aa007403fa9b53ac990.dir
+      size: 51985
       nfiles: 14
     params:
       config.yaml:
@@ -36,8 +36,8 @@ stages:
         model_params:
           n_estimators: 200
           max_depth:
-          max_features: 0.5
-          min_samples_leaf: 5
+          max_features: 1.0
+          min_samples_leaf: 2
         paths:
           raw_data: data/raw/shipments.csv
           inference_data: data/inference/new_shipments.csv
@@ -97,9 +97,9 @@ stages:
       size: 243653
     - path: models/model.joblib
       hash: md5
-      md5: e2286c980eacabe8c7c12c0190e2041e
-      size: 10034842
+      md5: 8b2292f60a6b18559e7cfe875994dc05
+      size: 27738778
     - path: reports/predictions.csv
       hash: md5
-      md5: 72873832f88dfc8ec50bfad4843bab0f
-      size: 442
+      md5: 5dc1b6acf1acc516d9950883f8a4a9df
+      size: 445

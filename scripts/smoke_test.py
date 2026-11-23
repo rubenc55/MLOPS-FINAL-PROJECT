@@ -6,7 +6,8 @@ Inputs: --url, the base URL of the service (Render, or http://localhost:8000 for
 Outputs: one log line per check; exit code 0 if every check passes, 1 otherwise.
 Used by: deploy.yml after every deploy and rollback, and by hand before the deadline.
 Why: a deploy is done only when the live URL answers real JSON: /health is ok, /predict returns
-one positive cost per shipment in the same order, and an invalid body gets 422.
+one positive cost per record of scripts/sample_request.json in the same order, and an invalid
+body gets 422.
 Only the Python standard library, so it runs anywhere without the project environment.
 """
 
@@ -17,17 +18,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 logger = logging.getLogger("smoke_test")
 
-SHIPMENTS = [
-    {"shipment_id": 1, "transport_mode": "Sea", "cargo_type": "General", "distance_km": 8928.0,
-     "weight_kg": 1683.2, "volume_m3": 4.719, "urgent": 0, "month": 3},
-    {"shipment_id": 2, "transport_mode": "Road", "cargo_type": "General", "distance_km": 1792.5,
-     "weight_kg": 2354.9, "volume_m3": 11.754, "urgent": 1, "month": 12},
-    {"shipment_id": 3, "transport_mode": "Air", "cargo_type": "Refrigerated", "distance_km": 5200.0,
-     "weight_kg": 350.0, "volume_m3": 2.1, "urgent": 1, "month": 7},
-]
+SAMPLE_REQUEST = Path(__file__).resolve().parent / "sample_request.json"
+RECORDS = json.loads(SAMPLE_REQUEST.read_text(encoding="utf-8"))["records"]
 
 
 def call(url: str, body: dict | None = None, timeout: float = 30.0) -> tuple[int, dict]:
@@ -71,17 +67,17 @@ def run_checks(base_url: str, wait: float, expect_version: str | None = None) ->
     elif expect_version and body.get("version") != expect_version:
         problems.append(f"/health reports version {body.get('version')}, expected {expect_version}")
 
-    status, body = call(f"{base_url}/predict", {"shipments": SHIPMENTS})
+    status, body = call(f"{base_url}/predict", {"records": RECORDS})
     predictions = body.get("predictions", [])
-    logger.info("POST /predict (%d shipments) -> %s %s", len(SHIPMENTS), status, predictions)
+    logger.info("POST /predict (%d records) -> %s %s", len(RECORDS), status, predictions)
     if status != 200:
         problems.append(f"/predict answered {status} {body}, expected 200")
-    elif [row.get("shipment_id") for row in predictions] != [row["shipment_id"] for row in SHIPMENTS]:
-        problems.append(f"/predict returned {len(predictions)} predictions for {len(SHIPMENTS)} shipments")
+    elif [row.get("shipment_id") for row in predictions] != [row["shipment_id"] for row in RECORDS]:
+        problems.append(f"/predict returned {len(predictions)} predictions for {len(RECORDS)} records")
     elif not all(isinstance(row.get("prediction"), (int, float)) and row["prediction"] > 0 for row in predictions):
         problems.append(f"/predict returned a cost that is not a positive number: {predictions}")
 
-    status, body = call(f"{base_url}/predict", {"shipments": [{**SHIPMENTS[0], "discount": 5}]})
+    status, body = call(f"{base_url}/predict", {"records": [{**RECORDS[0], "discount": 5}]})
     logger.info("POST /predict with an unknown field -> %s", status)
     if status != 422:
         problems.append(f"/predict accepted an unknown field with {status}, expected 422")
