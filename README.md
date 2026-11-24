@@ -378,6 +378,7 @@ From [`TEAM_BRIEF.md`](TEAM_BRIEF.md). Business Analytics retrains and monitors 
 | Training data | `data/raw/shipments.csv` (5,000 synthetic shipments, no personal data), version in `data/raw/shipments.csv.dvc`; split 70/15/15, fitted on train only |
 | Quality gate | `mape` at most 0.18 on validation, otherwise nothing is saved, registered or deployed |
 | Gate result | Passed: validation `mape` 0.130 against the limit 0.18 (run `stately-sloth-91`, 2026-11-23) |
+| Model choice | On validation `mape`, the same metric as the gate: version 5 (`max_features` 1.0, `min_samples_leaf` 2, 13.0%) was promoted over version 3 (0.5 and 5, 16.6%) after comparing the two runs. Test is scored once, after the gate, only as a final check. The frozen notebook in `notebooks/` is the assignment 1 exploration, which tuned on MAE |
 | Prod model | `shipping_cost_model` version 5 (alias `prod`), served by release `v1.1.1` and later; version 3 served `v1.0.0` to `v1.1.0` |
 | Metrics (2026-11-23, MLflow run `stately-sloth-91`) | Validation `mape` 13.0%, `mae` 213 USD; test `mape` 12.6%, `mae` 178 USD; no-ML table: validation `mape` 56.0%; version 3 before it: validation `mape` 16.6% (section 1) |
 | Valid range | The rules in `config.yaml` (`validation`): known modes and cargo types, distance 50 to 12,000 km, weight 10 to 9,900 kg, volume 0.028 to 93.213 m3, month 1 to 12. Shipments outside them get `422` and go to Pricing by hand |
