@@ -2,7 +2,7 @@
 
 > Racing Cargo should fund cost prediction as an MLOps project: tested, weekly retrained estimates replace generic tables, cutting quote time and winning more customers.
 
-This repository turns the exploration notebook into a tested, configurable batch pipeline. One command, `python -m src.main`, cleans and validates the shipments, trains a `RandomForestRegressor` that predicts `cost_usd`, releases the model only if `mape` on the validation split is at most 0.18, and writes an estimated cost for every new shipment. Every setting lives in [`config.yaml`](config.yaml).
+This repository turns the exploration notebook into a live service with MLOps. One command, `dvc repro`, runs the pipeline on versioned data, trains a `RandomForestRegressor` that predicts `cost_usd`, and registers the model in MLflow only if `mape` on the validation split is at most 0.18. A person moves `prod` to the chosen model, a GitHub Release ships it to https://shipping-cost-api.onrender.com, and an older tag rolls it back. Every setting lives in [`config.yaml`](config.yaml).
 
 ## 1. Business case
 
